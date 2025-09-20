@@ -15,7 +15,8 @@ dependencies = [
     "alembic",
     "pydantic",
     "python-dotenv",
-    "psycopg2-binary"
+    "psycopg2-binary",
+    "aiosqlite"
 ]
 
 # ===============================
@@ -27,6 +28,7 @@ dev = [
     "mypy",              # For static type checking
     "pre-commit",        # For managing pre-commit hooks
     "pytest",            # For testing
+    "pytest-asyncio",    # For testing asyncio code
     "httpx",             # For testing FastAPI endpoints
 ]
 
@@ -44,3 +46,7 @@ warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
 plugins = ["sqlalchemy.ext.mypy.plugin"]
+
+[[tool.mypy.overrides]]
+module = "src.alembic.*"
+disable_error_code = "attr-defined"
