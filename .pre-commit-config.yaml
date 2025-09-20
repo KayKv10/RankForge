@@ -19,6 +19,5 @@ repos:
     hooks:
     -   id: mypy
         additional_dependencies: [
-          "types-requests",
-          "sqlalchemy-stubs"
+            "sqlalchemy>=2.0"
         ]
