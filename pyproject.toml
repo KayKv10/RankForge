@@ -1,0 +1,40 @@
+# ===============================
+# === Project Metadata ==========
+# ===============================
+[project]
+name = "rankforge"
+version = "0.1.0"
+description = "A modern, full-stack rating and matchmaking system for competitive games for any number of players and any number of teams."
+authors = [{ name = "Kshitij Vaidya", email = "kmvaidya1@gmail.com" }]
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]"
+]
+
+# ===============================
+# === Developer Tools ===========
+# ===============================
+[project.optional-dependencies]
+dev = [
+    "ruff",              # For linting and formatting
+    "mypy",              # For static type checking
+    "pre-commit",        # For managing pre-commit hooks
+    "pytest",            # For testing
+    "httpx",             # For testing FastAPI endpoints
+]
+
+[tool.ruff]
+# Enable Pyflakes, pycodestyle, and isort rules.
+select = ["E", "F", "I"]
+line-length = 88
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
