@@ -1,3 +1,5 @@
+# tests/test_api.py
+
 """Tests for the main API endpoints."""
 import pytest
 from httpx import AsyncClient
@@ -11,9 +13,8 @@ async def test_read_root(async_client: AsyncClient):
     # Assert that the request was successful
     assert response.status_code == 200
 
-    # Assert that the response body is what we expect
+    # Assert that the response body is what we now expect
     expected_json = {
         "message": "Welcome to the RankForge API",
-        "database_connection": "Session created successfully",
     }
     assert response.json() == expected_json

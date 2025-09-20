@@ -2,27 +2,18 @@
 
 """Main FastAPI application for RankForge."""
 
-from typing import AsyncGenerator
 
-from fastapi import Depends, FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import FastAPI
 
-from .db.session import AsyncSessionLocal
+from .api import game
 
 app = FastAPI(title="RankForge API")
 
-
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency that provides an async database session."""
-    async with AsyncSessionLocal() as session:
-        yield session
+# Include routers into the main application
+app.include_router(game.router)
 
 
-@app.get("/")
-async def read_root(db: AsyncSession = Depends(get_db)) -> dict[str, str]:
-    """Provides a welcome message and confirms database connectivity."""
-    is_db_connected = "successfully" if db else "failed"
-    return {
-        "message": "Welcome to the RankForge API",
-        "database_connection": f"Session created {is_db_connected}",
-    }
+@app.get("/", tags=["Root"])
+async def read_root() -> dict[str, str]:
+    """Provides a welcome message."""
+    return {"message": "Welcome to the RankForge API"}
