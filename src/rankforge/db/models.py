@@ -57,6 +57,7 @@ class Game(Base):
     __tablename__ = "games"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+
     # The name of the calculation strategy,
     # e.g., 'glicko2_team_binary', 'glicko2_hybrid_ranked'
     rating_strategy: Mapped[str] = mapped_column(String, nullable=False)

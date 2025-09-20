@@ -5,7 +5,8 @@ from typing import AsyncGenerator
 import pytest
 from httpx import ASGITransport, AsyncClient
 from rankforge.db.models import Base
-from rankforge.main import app, get_db
+from rankforge.db.session import get_db
+from rankforge.main import app
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
