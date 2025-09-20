@@ -18,6 +18,7 @@ repos:
     rev: v1.7.1
     hooks:
     -   id: mypy
+        exclude: ^src/alembic/
         additional_dependencies: [
-            "sqlalchemy>=2.0"
+            "sqlalchemy>=2.0",
         ]

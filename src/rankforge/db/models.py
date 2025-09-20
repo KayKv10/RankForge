@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List
+from typing import Any, List
 
 from sqlalchemy import (
     JSON,
@@ -33,7 +33,9 @@ class Player(Base):
     __tablename__ = "players"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(default=timezone.utc)
+    created_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(timezone.utc)
+    )
     # Optional: could store Discord ID, etc. for future integrations
 
     # A player has a collection of profiles, one for each game they play
@@ -43,6 +45,10 @@ class Player(Base):
     match_participations: Mapped[List["MatchParticipant"]] = relationship(
         back_populates="player"
     )
+
+    def __init__(self, name: str, **kw: Any):
+        super().__init__(**kw)
+        self.name = name
 
 
 class Game(Base):
@@ -97,12 +103,14 @@ class Match(Base):
     __tablename__ = "matches"
     id: Mapped[int] = mapped_column(primary_key=True)
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), nullable=False)
-    played_at: Mapped[datetime] = mapped_column(default=timezone.utc)
+    played_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(timezone.utc)
+    )
 
     # Pillar 3: Contextual Metadata
     # Ex: {'map': 'A Diverse World', 'game_length': '3 minutes',
     #       'championship_match': true}
-    metadata: Mapped[dict] = mapped_column(JSON, default=lambda: {})
+    match_metadata: Mapped[dict] = mapped_column(JSON, default=lambda: {})
 
     game: Mapped["Game"] = relationship(back_populates="matches")
     participants: Mapped[List["MatchParticipant"]] = relationship(
