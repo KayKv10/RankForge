@@ -196,3 +196,147 @@ async def test_process_new_match_updates_glicko2_ratings(db_session: AsyncSessio
     assert (
         loser_profile.rating_info["rd"] != initial_rating_info["rd"]
     ), "Loser's rating deviation should change"
+
+
+@pytest.mark.asyncio
+async def test_process_new_match_handles_ranked_outcomes(db_session: AsyncSession):
+    """
+    Verify that the Glicko-2 engine correctly processes ranked outcomes
+    (e.g., 1st, 2nd, 3rd) and updates ratings accordingly.
+    """
+    # 1. ARRANGE: Set up a 4-player FFA game and their profiles.
+    game = Game(name="FFA Game", rating_strategy="glicko2")
+    players = [Player(name=f"Player {i+1}") for i in range(4)]
+    db_session.add(game)
+    db_session.add_all(players)
+    await db_session.commit()
+
+    # Give everyone a slightly different starting rating for more robust testing.
+    initial_ratings = [1550.0, 1500.0, 1450.0, 1400.0]
+    profiles = []
+    for i, player in enumerate(players):
+        profile = GameProfile(
+            player_id=player.id,
+            game_id=game.id,
+            rating_info={"rating": initial_ratings[i], "rd": 200.0, "vol": 0.06},
+        )
+        profiles.append(profile)
+    db_session.add_all(profiles)
+    await db_session.commit()
+
+    # 2. ACT: Process a match where the players finish in reverse order of rating.
+    # Player 4 (1400 rating) gets 1st, Player 3 gets 2nd, etc.
+    # This should result in significant rating changes.
+    match_in = MatchCreate(
+        game_id=game.id,
+        participants=[
+            MatchParticipantCreate(
+                player_id=players[0].id, team_id=1, outcome={"rank": 4}
+            ),  # 1550 -> 4th
+            MatchParticipantCreate(
+                player_id=players[1].id, team_id=2, outcome={"rank": 3}
+            ),  # 1500 -> 3rd
+            MatchParticipantCreate(
+                player_id=players[2].id, team_id=3, outcome={"rank": 2}
+            ),  # 1450 -> 2nd
+            MatchParticipantCreate(
+                player_id=players[3].id, team_id=4, outcome={"rank": 1}
+            ),  # 1400 -> 1st
+        ],
+    )
+    await match_service.process_new_match(db=db_session, match_in=match_in)
+
+    # 3. ASSERT: Verify the new ratings follow a logical progression.
+    new_ratings = []
+    for i, profile in enumerate(profiles):
+        await db_session.refresh(profile)
+        new_ratings.append(profile.rating_info["rating"])
+
+    # The 1st place winner (lowest rated player) should have a large rating gain.
+    p4_rating_change = new_ratings[3] - initial_ratings[3]
+    assert p4_rating_change > 0, "1st place should gain rating"
+
+    # The 4th place loser (highest rated player) should have a large rating loss.
+    p1_rating_change = new_ratings[0] - initial_ratings[0]
+    assert p1_rating_change < 0, "4th place should lose rating"
+
+    # The 1st place player should gain more rating than the 2nd place player.
+    p3_rating_change = new_ratings[2] - initial_ratings[2]
+    assert p4_rating_change > p3_rating_change, "1st place should gain more than 2nd"
+
+    # The 4th place player should lose more rating than the 3rd place player.
+    p2_rating_change = new_ratings[1] - initial_ratings[1]
+    assert p1_rating_change < p2_rating_change, "4th place should lose more than 3rd"
+
+
+@pytest.mark.asyncio
+async def test_process_new_match_handles_ranked_outcomes_2(db_session: AsyncSession):
+    """
+    Verify that the Glicko-2 engine correctly processes ranked outcomes
+    (e.g., 1st, 2nd, 3rd) and updates ratings accordingly. This test uses a
+    scenario where a "draw" result would be incorrect.
+    """
+    # 1. ARRANGE: Set up a 4-player FFA game and their profiles.
+    game = Game(name="FFA Game 2", rating_strategy="glicko2")
+    players = [Player(name=f"RankedPlayer {i+1}") for i in range(4)]
+    db_session.add(game)
+    db_session.add_all(players)
+    await db_session.commit()
+
+    # Players are rated from highest to lowest.
+    initial_ratings = [1550.0, 1500.0, 1450.0, 1400.0]
+    profiles = []
+    for i, player in enumerate(players):
+        profile = GameProfile(
+            player_id=player.id,
+            game_id=game.id,
+            rating_info={"rating": initial_ratings[i], "rd": 200.0, "vol": 0.06},
+        )
+        profiles.append(profile)
+    db_session.add_all(profiles)
+    await db_session.commit()
+
+    # 2. ACT: Process a match where the players finish according to their rating.
+    # Player 1 (highest rated) gets 1st, Player 4 (lowest rated) gets 4th.
+    match_in = MatchCreate(
+        game_id=game.id,
+        participants=[
+            MatchParticipantCreate(
+                player_id=players[0].id, team_id=1, outcome={"rank": 1}
+            ),  # 1550 -> 1st
+            MatchParticipantCreate(
+                player_id=players[1].id, team_id=2, outcome={"rank": 2}
+            ),  # 1500 -> 2nd
+            MatchParticipantCreate(
+                player_id=players[2].id, team_id=3, outcome={"rank": 3}
+            ),  # 1450 -> 3rd
+            MatchParticipantCreate(
+                player_id=players[3].id, team_id=4, outcome={"rank": 4}
+            ),  # 1400 -> 4th
+        ],
+    )
+    await match_service.process_new_match(db=db_session, match_in=match_in)
+
+    # 3. ASSERT: Verify the new ratings.
+    new_ratings = {}
+    for profile in profiles:
+        await db_session.refresh(profile)
+        new_ratings[profile.player_id] = profile.rating_info["rating"]
+
+    # The highest-rated player won, so their rating MUST increase.
+    # The current "draw" logic will incorrectly make it decrease.
+    assert (
+        new_ratings[players[0].id] > initial_ratings[0]
+    ), "1st place finisher's rating should increase, even if they were the favorite"
+
+    # The lowest-rated player lost, so their rating MUST decrease.
+    assert (
+        new_ratings[players[3].id] < initial_ratings[3]
+    ), "4th place finisher's rating should decrease"
+
+    # The 2nd place player should have a better rating change than the 3rd place player.
+    change_p2 = new_ratings[players[1].id] - initial_ratings[1]
+    change_p3 = new_ratings[players[2].id] - initial_ratings[2]
+    assert (
+        change_p2 > change_p3
+    ), "2nd place should have a better rating change than 3rd"

@@ -8,6 +8,7 @@ https://www.glicko.net/glicko/glicko2.pdf
 
 import math
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -172,9 +173,45 @@ class Glicko2Engine:
 # ===============================================
 
 
+def _calculate_player_scores(match: models.Match) -> dict[int, float]:
+    """
+    Parses match outcomes and calculates a normalized score for each player.
+
+    - For ranked games, score is normalized between 0 and 1.
+    - For win/loss games, score is 1.0 for a win, 0.0 for a loss.
+    - Defaults to 0.5 (draw) if outcome is not recognized.
+
+    Returns:
+        A dictionary mapping player_id to their calculated score.
+    """
+    player_scores = {}
+    num_participants = len(match.participants)
+
+    for p in match.participants:
+        outcome: dict[str, Any] = p.outcome
+        rank = outcome.get("rank")
+        result = outcome.get("result")
+
+        score = 0.5  # Default to a neutral performance (draw)
+
+        if rank is not None and isinstance(rank, int):
+            num_opponents = num_participants - 1
+            if num_opponents > 0:
+                # Normalized score: (NumOpponents - (Rank - 1)) / NumOpponents
+                score = (num_opponents - (rank - 1)) / float(num_opponents)
+        elif result == "win":
+            score = 1.0
+        elif result == "loss":
+            score = 0.0
+
+        player_scores[p.player_id] = score
+
+    return player_scores
+
+
 async def update_ratings_for_match(db: AsyncSession, match: models.Match) -> None:
     """
-    Updates player ratings for a completed match using our Glicko-2 implementation.
+    Updates player ratings for a completed match using the Glicko-2 implementation.
     """
     engine = Glicko2Engine()
     player_profiles = {}
@@ -194,29 +231,23 @@ async def update_ratings_for_match(db: AsyncSession, match: models.Match) -> Non
             sigma=profile.rating_info["vol"],
         )
 
+    # 2. Calculate a normalized performance score for each player from the match outcome
+    player_scores = _calculate_player_scores(match)
     new_ratings = {}
 
-    # 2. For each player, calculate their new rating
+    # 3. For each player, calculate their new rating
     for p1 in match.participants:
         opponents_data = []
+        p1_score = player_scores[p1.player_id]
+
         for p2 in match.participants:
             if p1.player_id == p2.player_id:
                 continue
 
-            # TODO: The logic for multi-team/-player outcome normalization goes here.
-
-            # For a simple 1v1 win/loss, this is straightforward.
-            p1_outcome = p1.outcome.get("result")
-            p2_outcome = p2.outcome.get("result")
-
-            score = 0.5  # Draw
-            if p1_outcome == "win" and p2_outcome == "loss":
-                score = 1.0
-            elif p1_outcome == "loss" and p2_outcome == "win":
-                score = 0.0
-
             opponent_rating = player_ratings[p2.player_id]
-            opponents_data.append((opponent_rating, score))
+            # In this model, the outcome against every opponent is the same,
+            # reflecting the player's overall performance in the match.
+            opponents_data.append((opponent_rating, p1_score))
 
         # Calculate the new rating
         current_rating = player_ratings[p1.player_id]
