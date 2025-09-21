@@ -78,7 +78,7 @@ async def process_new_match(
     # 3. Add the new match and its particpants to the session and commit.
     db.add(new_match)
     await db.commit()
-    await db.refresh(new_match)
+    await db.refresh(new_match, attribute_names=["participants"])
 
     # 4. Trigger the rating update process,
     await dummy_engine.update_ratings_for_match(db, new_match)
