@@ -7,12 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from rankforge.db import models
-from rankforge.rating import dummy_engine
+from rankforge.rating import dummy_engine, glicko2_engine
 from rankforge.schemas import match as match_schema
 
 # A default rating structure for new players in a game.
 # NOTE: This will be eventually configured per-game
-DEFAULT_RATING_INFO = {"rating": 1500, "rd": 300, "vol": 0.06}
+DEFAULT_RATING_INFO = {"rating": 1500.0, "rd": 350.0, "vol": 0.06}
 
 
 async def get_or_create_game_profile(
@@ -56,14 +56,19 @@ async def process_new_match(
     2. Triggering the rating calculation process.
     3. Updating player profiles with new ratings and stats.
     """
-    # 1. Create the database models from the input schema.
+    # 1. Fetch the game and determine the rating strategy
+    game = await db.get(models.Game, match_in.game_id)
+    if not game:
+        # This is rare cause
+        raise ValueError(f"Game with ID {match_in.game_id} not found")
+
+    # 2. Create the database models from the input schema.
     #    We exclude 'participants' because that's a list of schemas, not a direct field.
     match_data = match_in.model_dump(exclude={"participants"})
     new_match = models.Match(**match_data)
 
-    # 2. Ensure profiles exist and create participant records.
+    # 3. Ensure profiles exist and create participant records.
     for participant_data in match_in.participants:
-        # For each participant, ensure their game profile exists.
         profile = await get_or_create_game_profile(
             db, player_id=participant_data.player_id, game_id=match_in.game_id
         )
@@ -75,15 +80,19 @@ async def process_new_match(
         new_participant = models.MatchParticipant(**participant_with_history)
         new_match.participants.append(new_participant)
 
-    # 3. Add the new match and its particpants to the session and commit.
+    # 4. Add the new match and its particpants to the session and commit.
     db.add(new_match)
     await db.commit()
     await db.refresh(new_match, attribute_names=["participants"])
 
-    # 4. Trigger the rating update process,
-    await dummy_engine.update_ratings_for_match(db, new_match)
+    # 5. DISPATCHER: Trigger the correct rating update process.
+    if game.rating_strategy == "glicko2":
+        await glicko2_engine.update_ratings_for_match(db, new_match)
+    else:
+        # Default to dummy engine or handle as an error
+        await dummy_engine.update_ratings_for_match(db, new_match)
 
-    # 5. Re-query the match to eager load all relationships for the response.
+    # 6. Re-query the match to eager load all relationships for the response.
     result = await db.execute(
         select(models.Match)
         .where(models.Match.id == new_match.id)

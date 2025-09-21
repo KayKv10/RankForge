@@ -12,7 +12,9 @@ from sqlalchemy import (
     ForeignKey,
     String,
     UniqueConstraint,
+    select,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import (
     Mapped,
     declarative_base,
@@ -97,6 +99,15 @@ class GameProfile(Base):
 
     def __init__(self, **kw: Any):
         super().__init__(**kw)
+
+    @classmethod
+    async def find_by_player_and_game(
+        cls, db: AsyncSession, player_id: int, game_id: int
+    ) -> "GameProfile | None":
+        """Find a game profile by player and game IDs."""
+        query = select(cls).where(cls.player_id == player_id, cls.game_id == game_id)
+        result = await db.execute(query)
+        return result.scalar_one_or_none()
 
 
 # ===============================================

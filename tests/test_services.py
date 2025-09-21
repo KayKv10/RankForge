@@ -129,3 +129,70 @@ async def test_process_new_match_updates_player_stats(db_session: AsyncSession):
     assert (
         profile.stats["matches_played"] == 6
     ), "The dummy engine did not increment the matches_played stat."
+
+
+@pytest.mark.asyncio
+async def test_process_new_match_updates_glicko2_ratings(db_session: AsyncSession):
+    """
+    Verify that for a Glicko-2 game, the match service calls the correct
+    engine and updates the winner's and loser's ratings appropriately.
+    """
+    # 1. ARRANGE: Set up the game, players, and their initial profiles.
+    #    The `rating_strategy` is key here for the future dispatcher.
+    game = Game(name="Glicko-2 Game", rating_strategy="glicko2")
+    winner = Player(name="Winner")
+    loser = Player(name="Loser")
+    db_session.add_all([game, winner, loser])
+    await db_session.commit()
+
+    # Create pre-existing profiles with default Glicko-2 ratings.
+    initial_rating_info = {"rating": 1500.0, "rd": 300.0, "vol": 0.06}
+    winner_profile = GameProfile(
+        player_id=winner.id, game_id=game.id, rating_info=initial_rating_info.copy()
+    )
+    loser_profile = GameProfile(
+        player_id=loser.id, game_id=game.id, rating_info=initial_rating_info.copy()
+    )
+    db_session.add_all([winner_profile, loser_profile])
+    await db_session.commit()
+
+    # Capture the initial rating values for comparison.
+    winner_initial_rating: float = winner_profile.rating_info["rating"]
+    loser_initial_rating: float = loser_profile.rating_info["rating"]
+
+    # 2. ACT: Prepare and process the match payload via the service.
+    match_in = MatchCreate(
+        game_id=game.id,
+        participants=[
+            MatchParticipantCreate(
+                player_id=winner.id, team_id=1, outcome={"result": "win"}
+            ),
+            MatchParticipantCreate(
+                player_id=loser.id, team_id=2, outcome={"result": "loss"}
+            ),
+        ],
+    )
+    await match_service.process_new_match(db=db_session, match_in=match_in)
+
+    # 3. ASSERT: Verify that the ratings in the database have changed as expected.
+    await db_session.refresh(winner_profile)
+    await db_session.refresh(loser_profile)
+
+    # Assert that the winner's rating has increased.
+    assert (
+        winner_profile.rating_info["rating"] > winner_initial_rating
+    ), "Winner's rating should increase"
+
+    # Assert that the loser's rating has decreased.
+    assert (
+        loser_profile.rating_info["rating"] < loser_initial_rating
+    ), "Loser's rating should decrease"
+
+    # A key property of Glicko-2 is that Rating Deviation (RD) should change
+    # after a match. It usually decreases.
+    assert (
+        winner_profile.rating_info["rd"] != initial_rating_info["rd"]
+    ), "Winner's rating deviation should change"
+    assert (
+        loser_profile.rating_info["rd"] != initial_rating_info["rd"]
+    ), "Loser's rating deviation should change"
