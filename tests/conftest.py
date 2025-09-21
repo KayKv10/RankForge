@@ -7,7 +7,11 @@ from httpx import ASGITransport, AsyncClient
 from rankforge.db.models import Base
 from rankforge.db.session import get_db
 from rankforge.main import app
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
@@ -37,9 +41,21 @@ async def setup_database():
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Fixture to provide a database session to a test."""
-    async with AsyncTestingSessionLocal() as session:
-        yield session
+    """
+    Fixture to provide a transactional database session to a test.
+    The transaction is rolled back after the test, ensuring isolation.
+    """
+    connection = await engine.connect()
+    transaction = await connection.begin()
+    session = AsyncTestingSessionLocal(bind=connection)
+
+    yield session
+
+    # After the test is done, roll back the transaction to clean up.
+    await session.close()
+    if transaction.is_active:
+        await transaction.rollback()
+    await connection.close()
 
 
 @pytest.fixture

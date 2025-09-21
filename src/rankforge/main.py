@@ -5,13 +5,14 @@
 
 from fastapi import FastAPI
 
-from .api import game, player
+from .api import game, match, player
 
 app = FastAPI(title="RankForge API")
 
 # Include routers into the main application
 app.include_router(game.router)
 app.include_router(player.router)
+app.include_router(match.router)
 
 
 @app.get("/", tags=["Root"])
