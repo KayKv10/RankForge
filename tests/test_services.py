@@ -83,3 +83,49 @@ async def test_process_new_match_creates_game_profiles(db_session: AsyncSession)
     )
     all_profiles_p2 = all_profiles_p2_query.scalars().all()
     assert len(all_profiles_p2) == 2, "Incorrect total number of profiles for player2"
+
+
+@pytest.mark.asyncio
+async def test_process_new_match_updates_player_stats(db_session: AsyncSession):
+    """
+    Verify that the full match processing pipeline calls the rating engine
+    and that the engine's changes are persisted to the database.
+    """
+    # 1. SETUP: Create a game, player, and a pre-existing GameProfile.
+    game = Game(name="Stat Test Game", rating_strategy="test")
+    player = Player(name="StatPlayer")
+    db_session.add_all([game, player])
+    await db_session.commit()
+
+    # The player's profile shows they have played 5 matches already.
+    profile = GameProfile(
+        player_id=player.id,
+        game_id=game.id,
+        rating_info={"rating": 1550},
+        stats={"matches_played": 5},
+    )
+    db_session.add(profile)
+    await db_session.commit()
+
+    # 2. PREPARE INPUT: Create the Pydantic schema for the new match.
+    match_in = MatchCreate(
+        game_id=game.id,
+        participants=[
+            MatchParticipantCreate(
+                player_id=player.id, team_id=1, outcome={"result": "win"}
+            )
+        ],
+    )
+
+    # 3. EXECUTE: Call the service function.
+    await match_service.process_new_match(db=db_session, match_in=match_in)
+
+    # 4. ASSERT: Verify that the stats in the database have been updated.
+    await db_session.refresh(profile)
+
+    # Assert that the 'matches_played' stat was correctly incremented.
+    assert profile.stats is not None
+    assert "matches_played" in profile.stats
+    assert (
+        profile.stats["matches_played"] == 6
+    ), "The dummy engine did not increment the matches_played stat."
