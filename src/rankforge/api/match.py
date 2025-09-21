@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from rankforge.db.models import Match, MatchParticipant
 from rankforge.db.session import get_db
 from rankforge.schemas import match as match_schema
+from rankforge.services import match_service
 
 # Create an APIRouter instance for matches
 router = APIRouter(prefix="/matches", tags=["Matches"])
@@ -42,45 +43,9 @@ async def create_match(
     match_in: match_schema.MatchCreate, db: AsyncSession = Depends(get_db)
 ) -> Match:
     """
-    Create a new match and its participants.
-
-    This endpoint takes a nested payload to create a match and all its
-    associated participant records in a single transaction.
+    Create a new match, process ratings, and return the created match.
     """
-    # 1. Create the parent Match object from the payload.
-    #    We exclude 'participants' because that's a list of schemas, not a direct field
-    match_data = match_in.model_dump(exclude={"participants"})
-    new_match = Match(**match_data)
-
-    # 2. Create MatchParticipant objects for each participant in the payload.
-    for participant_data in match_in.participants:
-        new_participant = MatchParticipant(**participant_data.model_dump())
-
-        # Associate this participant with the new match
-        new_match.participants.append(new_participant)
-
-    # 3. Add the new_match to the session.
-    #    SQLAlchemy's relationship configuration with `cascade="all, delete-orphan"`
-    #    means that adding the parent `Match` will also automatically add
-    #    all the `MatchParticipant` objects in its `participants` list.
-    db.add(new_match)
-    await db.commit()
-
-    # 4. Refresh the match to load all data from the DB, including relationships.
-    await db.refresh(
-        new_match,
-        attribute_names=["participants"],
-    )
-
-    # To load the nested player objects inside participants,
-    #   requery for the object with the relationships loaded.
-    result = await db.execute(
-        select(Match)
-        .where(Match.id == new_match.id)
-        .options(selectinload(Match.participants).selectinload(MatchParticipant.player))
-    )
-    created_match = result.scalar_one()
-
+    created_match = await match_service.process_new_match(db, match_in)
     return created_match
 
 
