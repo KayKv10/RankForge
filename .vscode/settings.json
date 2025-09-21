@@ -7,8 +7,8 @@
         "editor.formatOnSave": true,
         // Run additional "fix-all" and "organize imports" actions on save
         "editor.codeActionsOnSave": {
-            "source.fixAll": true,
-            "source.organizeImports": true
+            "source.fixAll": "explicit",
+            "source.organizeImports": "explicit"
         }
     },
     // Enable basic type checking powered by your mypy installation
