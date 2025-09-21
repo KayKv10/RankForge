@@ -69,6 +69,9 @@ class Game(Base):
     )
     matches: Mapped[List["Match"]] = relationship(back_populates="game")
 
+    def __init__(self, **kw: Any):
+        super().__init__(**kw)
+
 
 class GameProfile(Base):
     """Stores a player's rating and stats for a specific game."""
@@ -91,6 +94,9 @@ class GameProfile(Base):
     game: Mapped["Game"] = relationship(back_populates="game_profiles")
 
     __table_args__ = (UniqueConstraint("player_id", "game_id", name="_player_game_uc"),)
+
+    def __init__(self, **kw: Any):
+        super().__init__(**kw)
 
 
 # ===============================================
