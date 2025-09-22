@@ -8,7 +8,6 @@ https://www.glicko.net/glicko/glicko2.pdf
 
 import math
 from dataclasses import dataclass
-from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -177,34 +176,55 @@ def _calculate_player_scores(match: models.Match) -> dict[int, float]:
     """
     Parses match outcomes and calculates a normalized score for each player.
 
-    - For ranked games, score is normalized between 0 and 1.
-    - For win/loss games, score is 1.0 for a win, 0.0 for a loss.
+    - Prioritizes win/loss results for binary outcomes.
+    - For ranked games, normalizes score based on the number of competing
+      entities (teams or individual players in an FFA).
     - Defaults to 0.5 (draw) if outcome is not recognized.
 
     Returns:
         A dictionary mapping player_id to their calculated score.
     """
     player_scores = {}
-    num_participants = len(match.participants)
+
+    # Check for simple win/loss first, as it's the most direct outcome
+    has_win_loss = any(
+        p.outcome.get("result") in ["win", "loss"] for p in match.participants
+    )
+    if has_win_loss:
+        for p in match.participants:
+            result = p.outcome.get("result")
+            if result == "win":
+                player_scores[p.player_id] = 1.0
+            elif result == "loss":
+                player_scores[p.player_id] = 0.0
+            else:
+                player_scores[p.player_id] = 0.5  # Draw or other
+        return player_scores
+
+    # If no win/loss, proceed with ranked logic
+    # Determine the number of competing entities (teams or players)
+    team_ids = {p.team_id for p in match.participants}
+    num_competitors = len(team_ids)
+    num_opponents = num_competitors - 1
+
+    if num_opponents <= 0:  # Not a competitive match
+        for p in match.participants:
+            player_scores[p.player_id] = 0.5
+            # TODO: Raise an error here
+        return player_scores
+
+    # Map team_id to its rank for easy lookup
+    team_ranks = {p.team_id: p.outcome.get("rank") for p in match.participants}
 
     for p in match.participants:
-        outcome: dict[str, Any] = p.outcome
-        rank = outcome.get("rank")
-        result = outcome.get("result")
-
-        score = 0.5  # Default to a neutral performance (draw)
+        rank = team_ranks.get(p.team_id)
 
         if rank is not None and isinstance(rank, int):
-            num_opponents = num_participants - 1
-            if num_opponents > 0:
-                # Normalized score: (NumOpponents - (Rank - 1)) / NumOpponents
-                score = (num_opponents - (rank - 1)) / float(num_opponents)
-        elif result == "win":
-            score = 1.0
-        elif result == "loss":
-            score = 0.0
-
-        player_scores[p.player_id] = score
+            # Normalized score: (NumOpponents - (Rank - 1)) / NumOpponents
+            score = (num_opponents - (rank - 1)) / float(num_opponents)
+            player_scores[p.player_id] = score
+        else:
+            player_scores[p.player_id] = 0.5  # Default for missing/invalid rank
 
     return player_scores
 
@@ -241,7 +261,7 @@ async def update_ratings_for_match(db: AsyncSession, match: models.Match) -> Non
         p1_score = player_scores[p1.player_id]
 
         for p2 in match.participants:
-            if p1.player_id == p2.player_id:
+            if p1.team_id == p2.team_id:
                 continue
 
             opponent_rating = player_ratings[p2.player_id]
