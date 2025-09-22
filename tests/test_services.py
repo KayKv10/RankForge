@@ -340,3 +340,183 @@ async def test_process_new_match_handles_ranked_outcomes_2(db_session: AsyncSess
     assert (
         change_p2 > change_p3
     ), "2nd place should have a better rating change than 3rd"
+
+
+# tests/test_services.py
+
+# ... (existing imports)
+
+# ... (existing tests)
+
+
+@pytest.mark.asyncio
+async def test_process_new_match_handles_2v2_team_game(db_session: AsyncSession):
+    """
+    Verify the Glicko-2 engine correctly processes a 2v2 team-based match.
+    - Winners' ratings should increase.
+    - Losers' ratings should decrease.
+    - Teammates with identical starting ratings should have identical rating changes.
+    """
+    # 1. ARRANGE: Set up a "Padel" game and four players.
+    game = Game(name="Padel", rating_strategy="glicko2")
+    team1_p1 = Player(name="Player A1")
+    team1_p2 = Player(name="Player A2")
+    team2_p1 = Player(name="Player B1")
+    team2_p2 = Player(name="Player B2")
+    players = [team1_p1, team1_p2, team2_p1, team2_p2]
+    db_session.add(game)
+    db_session.add_all(players)
+    await db_session.commit()
+
+    # Create identical, default profiles for all four players.
+    initial_rating_info = {"rating": 1500.0, "rd": 200.0, "vol": 0.06}
+    profiles = {}
+    for player in players:
+        profile = GameProfile(
+            player_id=player.id,
+            game_id=game.id,
+            rating_info=initial_rating_info.copy(),
+        )
+        db_session.add(profile)
+        profiles[player.id] = profile
+    await db_session.commit()
+
+    # 2. ACT: Process a match where Team 1 (A1, A2) defeats Team 2 (B1, B2).
+    match_in = MatchCreate(
+        game_id=game.id,
+        participants=[
+            # Team 1 (Winners)
+            MatchParticipantCreate(
+                player_id=team1_p1.id, team_id=1, outcome={"result": "win"}
+            ),
+            MatchParticipantCreate(
+                player_id=team1_p2.id, team_id=1, outcome={"result": "win"}
+            ),
+            # Team 2 (Losers)
+            MatchParticipantCreate(
+                player_id=team2_p1.id, team_id=2, outcome={"result": "loss"}
+            ),
+            MatchParticipantCreate(
+                player_id=team2_p2.id, team_id=2, outcome={"result": "loss"}
+            ),
+        ],
+    )
+    await match_service.process_new_match(db=db_session, match_in=match_in)
+
+    # 3. ASSERT: Verify the rating changes are logical for a team game.
+    await db_session.refresh(profiles[team1_p1.id])
+    await db_session.refresh(profiles[team1_p2.id])
+    await db_session.refresh(profiles[team2_p1.id])
+    await db_session.refresh(profiles[team2_p2.id])
+
+    # Get the new ratings
+    t1_p1_new_rating = profiles[team1_p1.id].rating_info["rating"]
+    t1_p2_new_rating = profiles[team1_p2.id].rating_info["rating"]
+    t2_p1_new_rating = profiles[team2_p1.id].rating_info["rating"]
+    t2_p2_new_rating = profiles[team2_p2.id].rating_info["rating"]
+
+    # Assert winners' ratings went up
+    assert t1_p1_new_rating > initial_rating_info["rating"]
+    assert t1_p2_new_rating > initial_rating_info["rating"]
+
+    # Assert losers' ratings went down
+    assert t2_p1_new_rating < initial_rating_info["rating"]
+    assert t2_p2_new_rating < initial_rating_info["rating"]
+
+    # Assert teammates had identical rating changes
+    assert t1_p1_new_rating == t1_p2_new_rating
+    assert t2_p1_new_rating == t2_p2_new_rating
+
+
+@pytest.mark.asyncio
+async def test_process_new_match_handles_ranked_teams(db_session: AsyncSession):
+    """Verify the Glicko-2 engine correctly processes
+    a ranked team match (e.g., 4 teams of 2).
+    The score normalization should be based on the number of teams, not players.
+    """
+    # 1. ARRANGE: Set up a game, 8 players, and 4 teams.
+    game = Game(name="Ranked Teams Game", rating_strategy="glicko2")
+    db_session.add(game)
+    await db_session.commit()
+
+    players = [Player(name=f"RT Player {i+1}") for i in range(8)]
+    db_session.add_all(players)
+    await db_session.commit()
+
+    # Create teams with progressively lower ratings to test an "upset"
+    team_ratings = [1600.0, 1550.0, 1500.0, 1450.0]
+    initial_ratings_map = {}
+    profiles = {}
+
+    for i, player in enumerate(players):
+        team_index = i // 2  # 2 players per team
+        initial_rating = team_ratings[team_index]
+        initial_ratings_map[player.id] = initial_rating
+
+        profile = GameProfile(
+            player_id=player.id,
+            game_id=game.id,
+            rating_info={"rating": initial_rating, "rd": 150.0, "vol": 0.06},
+        )
+        db_session.add(profile)
+        profiles[player.id] = profile
+    await db_session.commit()
+
+    # 2. ACT: Process a match where the teams finish in reverse order of rating.
+    # Team 4 (1450 avg) gets 1st, Team 1 (1600 avg) gets 4th.
+    match_in = MatchCreate(
+        game_id=game.id,
+        participants=[
+            # Team 1 (Rank 4)
+            MatchParticipantCreate(
+                player_id=players[0].id, team_id=1, outcome={"rank": 4}
+            ),
+            MatchParticipantCreate(
+                player_id=players[1].id, team_id=1, outcome={"rank": 4}
+            ),
+            # Team 2 (Rank 3)
+            MatchParticipantCreate(
+                player_id=players[2].id, team_id=2, outcome={"rank": 3}
+            ),
+            MatchParticipantCreate(
+                player_id=players[3].id, team_id=2, outcome={"rank": 3}
+            ),
+            # Team 3 (Rank 2)
+            MatchParticipantCreate(
+                player_id=players[4].id, team_id=3, outcome={"rank": 2}
+            ),
+            MatchParticipantCreate(
+                player_id=players[5].id, team_id=3, outcome={"rank": 2}
+            ),
+            # Team 4 (Rank 1)
+            MatchParticipantCreate(
+                player_id=players[6].id, team_id=4, outcome={"rank": 1}
+            ),
+            MatchParticipantCreate(
+                player_id=players[7].id, team_id=4, outcome={"rank": 1}
+            ),
+        ],
+    )
+    await match_service.process_new_match(db=db_session, match_in=match_in)
+
+    # 3. ASSERT: Verify the rating changes are logical for a ranked team game.
+    new_ratings_map = {}
+    for pid, profile in profiles.items():
+        await db_session.refresh(profile)
+        new_ratings_map[pid] = profile.rating_info["rating"]
+
+    # Player from winning team (lowest rated) should see a large rating gain.
+    winner_change = new_ratings_map[players[6].id] - initial_ratings_map[players[6].id]
+    assert winner_change > 0, "1st place team member should gain rating"
+
+    # Player from losing team (highest rated) should see a large rating loss.
+    # The current bug will give them a score of ~0.57, so their rating might even go UP.
+    loser_change = new_ratings_map[players[0].id] - initial_ratings_map[players[0].id]
+    assert loser_change < 0, "4th place team member should lose rating"
+
+    # The 2nd place team should have a better rating change than the 3rd place team.
+    p_rank2_change = new_ratings_map[players[4].id] - initial_ratings_map[players[4].id]
+    p_rank3_change = new_ratings_map[players[2].id] - initial_ratings_map[players[2].id]
+    assert (
+        p_rank2_change > p_rank3_change
+    ), "2nd place change should be > 3rd place change"
