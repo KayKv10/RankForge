@@ -60,6 +60,7 @@ cover/
 local_settings.py
 db.sqlite3
 rankforge.db
+.rankforge.db
 db.sqlite3-journal
 
 # Flask stuff:
@@ -206,3 +207,7 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Certain Folders
+data/
+scripts/
