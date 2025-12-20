@@ -4,9 +4,11 @@
 
 RankForge is a modern, game-agnostic rating and matchmaking system designed to track player performance across any competitive format (1v1, 1vN, MvN). The project serves dual purposes: providing a fun, competitive experience for tracking performance among friends, and functioning as a portfolio showcase demonstrating expertise across mathematics, data science, software development, and frontend skills.
 
-The project currently has a **solid backend foundation** with a fully functional FastAPI application, complete Glicko-2 rating implementation, flexible data models supporting any game format, and comprehensive test coverage. The backend API is production-ready for basic match recording and rating calculations. However, the project is missing critical components: **no frontend exists**, **no matchmaking algorithm is implemented**, **no leaderboard/analytics endpoints are available**, and the matchmaking algorithm (using skill distribution superposition and simulated annealing) exists only as a concept.
+The project has a **functional but not production-ready backend** with a working FastAPI application, complete Glicko-2 rating implementation, and flexible data models. However, a deep code analysis reveals **significant technical debt and architectural issues** that must be addressed before building on this foundation. Critical problems include: broken transaction management that can leave matches and ratings in inconsistent states, missing database indexes, unvalidated JSON schemas, hardcoded configuration, and incomplete error handling. The codebase scores approximately **4.5/10 on production readiness**.
 
-The path to MVP completion requires approximately **150-200 hours of development** across four major phases: backend API completion, frontend development, matchmaking implementation, and polish/documentation. At 3-6 hours per week, this translates to roughly 6-12 months of dedicated work. This plan prioritizes delivering value incrementally, with each phase producing a functional improvement to the system.
+Beyond code quality, the project is missing critical components: **no frontend exists**, **no matchmaking algorithm is implemented**, **no leaderboard/analytics endpoints are available**, and match update operations (a core challenge) have no implementation or design. The update cascade problem—recalculating all affected ratings when a historical match is corrected—is a non-trivial architectural challenge that requires careful design.
+
+The path to MVP completion requires approximately **309-348 hours of development** across five major phases: foundation refactoring (Phase 0), matchmaking and match updates (Phase 1), frontend development (Phase 2), deployment (Phase 3), and documentation (Phase 4). At 3-6 hours per week, this translates to roughly **18-24 months** of dedicated work. Phase 0 is significantly expanded (122 hours) to establish a truly production-quality foundation before adding new features.
 
 ---
 
@@ -14,11 +16,12 @@ The path to MVP completion requires approximately **150-200 hours of development
 
 ### What's Implemented
 
-**Backend Infrastructure (Production-Ready)**
+**Backend Infrastructure (Functional, Not Production-Ready)**
 - FastAPI async web application with automatic OpenAPI documentation
-- SQLAlchemy 2.0 ORM with async support (aiosqlite for development, PostgreSQL-ready)
+- SQLAlchemy 2.0 ORM with async support (aiosqlite for development)
 - Alembic database migrations for schema versioning
-- Clean separation of concerns: API routes, schemas, services, models
+- Basic separation of concerns: API routes, schemas, services, models
+- *Note: See "Critical Code Quality Issues" section for production-readiness gaps*
 
 **Data Models (Complete)**
 - `Player` - Unique person across all games
@@ -84,6 +87,409 @@ The path to MVP completion requires approximately **150-200 hours of development
 4. **Pydantic Schema Expansion** - Current schemas don't expose rating info in player responses; need GameProfile schemas for leaderboard use
 5. **Type Annotations** - Some function parameters lack full type hints
 6. **Test Coverage for Glicko-2** - Mathematical edge cases (very high/low RD, extreme rating differences) need more test coverage
+
+---
+
+## Critical Code Quality Issues
+
+This section provides a thorough analysis of production-readiness gaps that must be addressed in Phase 0. The codebase currently scores approximately **4.5/10** on production readiness.
+
+### Production Readiness Summary
+
+| Component | Score | Status |
+|-----------|-------|--------|
+| Database Models | 6/10 | NEEDS WORK |
+| Session Management | 3/10 | CRITICAL |
+| Pydantic Schemas | 5/10 | NEEDS WORK |
+| Service Layer | 4/10 | CRITICAL |
+| API Layer | 5/10 | NEEDS WORK |
+| Test Coverage | 4/10 | INCOMPLETE |
+
+### Database Models Issues
+
+**Schema Design Problems:**
+
+1. **Missing Timestamp Tracking** - `GameProfile`, `Match`, and `MatchParticipant` lack `created_at` and `updated_at` fields, making audit trails impossible for rating investigations.
+
+2. **No Database Indexes** - No explicit indexes beyond primary/unique constraints. Queries filtering by `player_id`, `game_id`, `match_id` will perform full table scans at scale.
+   ```python
+   # Missing indexes needed on:
+   # - GameProfile.player_id, GameProfile.game_id
+   # - MatchParticipant.match_id, MatchParticipant.player_id
+   # - Match.game_id
+   ```
+
+3. **Unvalidated JSON Fields** - `rating_info`, `stats`, `outcome`, and `match_metadata` accept any dict without structure validation. No TypedDict or schema enforcement.
+
+4. **Rating Key Inconsistency** - The codebase uses inconsistent keys:
+   - `glicko2_engine.py`: `rating`, `rd`, `vol`
+   - Schema comments: `rating`, `rd`, `volatility`
+   - This causes hidden bugs in rating updates.
+
+5. **Inconsistent Cascade Behavior** - `Player.game_profiles` cascades on delete, but `Player.match_participations` does not, leaving orphaned records.
+
+6. **No Soft Delete Support** - Hard deletes destroy match history integrity. No `deleted_at` field for any model.
+
+### Session Management Issues (CRITICAL)
+
+1. **Hardcoded Database URL:**
+   ```python
+   # Current (session.py)
+   DATABASE_URL = "sqlite+aiosqlite:///./rankforge.db"
+
+   # Should be:
+   DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./rankforge.db")
+   ```
+
+2. **No Connection Pool Configuration:**
+   ```python
+   # Current
+   engine = create_async_engine(DATABASE_URL)
+
+   # Should be:
+   engine = create_async_engine(
+       DATABASE_URL,
+       pool_size=20,
+       max_overflow=10,
+       pool_pre_ping=True,
+   )
+   ```
+
+3. **Dangerous `expire_on_commit=False`** - Objects remain accessible after commit but may contain stale data.
+
+4. **No Connection Lifecycle Management** - No disposal on shutdown, no graceful cleanup.
+
+5. **Missing Error Handling in `get_db()`** - No try-except with explicit rollback on failure.
+
+### Pydantic Schema Issues
+
+1. **No Field Validation:**
+   ```python
+   # Current
+   class PlayerCreate(PlayerBase):
+       pass  # No validation
+
+   # Should be:
+   class PlayerCreate(PlayerBase):
+       name: str = Field(..., min_length=2, max_length=100)
+   ```
+
+2. **Untyped `outcome` Field:**
+   ```python
+   # Current
+   outcome: dict  # Accepts anything
+
+   # Should be:
+   class BinaryOutcome(BaseModel):
+       result: Literal["win", "loss", "draw"]
+
+   class RankedOutcome(BaseModel):
+       rank: int = Field(..., ge=1)
+   ```
+
+3. **No `rating_strategy` Enum:**
+   ```python
+   # Should validate against implemented strategies:
+   class RatingStrategy(str, Enum):
+       GLICKO2 = "glicko2"
+       DUMMY = "dummy"
+   ```
+
+4. **Missing Fields in Read Schemas** - `MatchParticipantRead` doesn't include `rating_info_before` and `rating_info_change`.
+
+### Service Layer Issues (CRITICAL)
+
+1. **Broken Transaction Atomicity:**
+   ```python
+   # Current flow in process_new_match():
+   await db.commit()  # Line 85 - commits match data
+   await glicko2_engine.update_ratings_for_match(db, new_match)  # Can fail!
+   # If rating engine fails, match exists but ratings are wrong
+   ```
+
+   This means a match can be recorded without ratings being updated, leaving the system in an inconsistent state.
+
+2. **No Participant Validation:**
+   - No check for minimum 2 participants
+   - No check for duplicate players
+   - No validation of team structures
+   - Empty participant lists accepted
+
+3. **Hardcoded Default Ratings:**
+   ```python
+   DEFAULT_RATING_INFO = {"rating": 1500.0, "rd": 350.0, "vol": 0.06}
+   # Should be configurable per-game
+   ```
+
+4. **Silent Failures in Rating Engine:**
+   ```python
+   # glicko2_engine.py
+   if not profile:
+       continue  # Silently skips missing profiles!
+   ```
+
+### API Layer Issues
+
+1. **No Pagination:**
+   ```python
+   # Current - returns ALL records
+   @router.get("/", response_model=list[match_schema.MatchRead])
+   async def read_matches(...):
+       query = select(Match).order_by(Match.id)  # No limit!
+   ```
+
+2. **Unhandled Database Exceptions:**
+   ```python
+   # Creating duplicate player throws IntegrityError, not HTTPException
+   new_player = Player(**player_in.model_dump())
+   await db.commit()  # Throws raw SQLAlchemy error
+   ```
+
+3. **Missing Core Endpoints:**
+   - `GET /games/{game_id}/leaderboard`
+   - `GET /players/{player_id}/stats`
+   - `GET /players/{player_id}/matches`
+   - `GET /health`
+   - `PUT /matches/{match_id}` (update with cascade)
+
+4. **No Idempotency Support** - Multiple identical POST requests create duplicates.
+
+5. **No Request Logging** - Cannot audit API usage or debug production issues.
+
+### Test Coverage Gaps
+
+1. **No Error Scenario Tests:**
+   - Duplicate player creation
+   - Invalid game_id references
+   - Missing game profiles
+
+2. **No Transaction Rollback Tests:**
+   - Partial failure scenarios
+   - Database connection failures
+
+3. **No Concurrency Tests:**
+   - Simultaneous match creation
+   - Race conditions on rating updates
+
+4. **No Validation Tests:**
+   - Invalid outcome formats
+   - Invalid team structures
+   - Empty participant lists
+
+---
+
+## Match Update Cascade: The Rating Recalculation Problem
+
+Updating historical match data is one of the most architecturally challenging features in a rating system. When a match is corrected (wrong score, wrong players, wrong outcome), all subsequent ratings become invalid and must be recalculated.
+
+### The Problem
+
+Consider this scenario:
+```
+Match 1: Alice vs Bob → Alice wins → Alice: 1520, Bob: 1480
+Match 2: Bob vs Carol → Bob wins → Bob: 1510, Carol: 1470
+Match 3: Alice vs Carol → Carol wins → Alice: 1490, Carol: 1510
+
+User discovers Match 1 was recorded wrong - Bob actually won.
+
+Now what? All ratings are wrong:
+- Match 1 recalc: Alice: 1480, Bob: 1520 (reversed)
+- Match 2 recalc: Bob: 1550, Carol: 1470 (Bob started higher)
+- Match 3 recalc: Alice: 1450, Carol: 1510 (Alice started lower)
+```
+
+Every match after the corrected one must be recalculated in chronological order, using the corrected ratings as inputs.
+
+### Architectural Approaches
+
+#### Approach 1: Full Forward Recalculation (Recommended for MVP)
+
+**How it works:**
+1. Identify the updated match's `played_at` timestamp
+2. Query all matches for the same game with `played_at >= updated_match.played_at`
+3. Reset all affected players' ratings to their state *before* the updated match
+4. Replay all matches in chronological order, recalculating ratings
+
+**Implementation:**
+```python
+async def recalculate_ratings_from_match(
+    db: AsyncSession,
+    match_id: int
+) -> RecalculationResult:
+    """
+    Recalculate all ratings affected by updating a historical match.
+    """
+    match = await db.get(Match, match_id)
+    game_id = match.game_id
+
+    # 1. Get all matches from this point forward
+    affected_matches = await db.execute(
+        select(Match)
+        .where(Match.game_id == game_id)
+        .where(Match.played_at >= match.played_at)
+        .order_by(Match.played_at)
+    )
+
+    # 2. Get all affected players
+    affected_player_ids = set()
+    for m in affected_matches:
+        for p in m.participants:
+            affected_player_ids.add(p.player_id)
+
+    # 3. Reset ratings to "before" state of first affected match
+    for player_id in affected_player_ids:
+        profile = await get_game_profile(db, player_id, game_id)
+        first_participation = get_first_participation(player_id, affected_matches)
+        if first_participation.rating_info_before:
+            profile.rating_info = first_participation.rating_info_before
+
+    # 4. Replay all matches in order
+    for m in affected_matches:
+        await rating_engine.update_ratings_for_match(db, m)
+
+    await db.commit()
+    return RecalculationResult(matches_affected=len(affected_matches))
+```
+
+**Pros:**
+- Simple to implement and understand
+- Guarantees correctness
+- No additional data structures needed
+
+**Cons:**
+- O(n) where n = matches after the update
+- Slow for old matches in active games
+- All-or-nothing operation
+
+**Performance Characteristics:**
+- 100 matches: < 1 second
+- 1,000 matches: 5-10 seconds
+- 10,000 matches: 1-2 minutes
+
+**Mitigation:** For MVP with friends (likely < 500 total matches), this is perfectly acceptable.
+
+#### Approach 2: Event Sourcing with Snapshots
+
+**How it works:**
+- Store all match events as immutable records
+- Periodically create rating "snapshots" at checkpoints
+- On update, find nearest snapshot before the change and replay forward
+
+**Implementation Sketch:**
+```python
+class RatingSnapshot(Base):
+    __tablename__ = "rating_snapshots"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    game_id: Mapped[int] = mapped_column(ForeignKey("games.id"))
+    snapshot_at: Mapped[datetime]
+    ratings: Mapped[dict]  # {player_id: rating_info}
+    match_id: Mapped[int]  # Last match included in snapshot
+```
+
+**Pros:**
+- Can limit recalculation to snapshot intervals
+- Enables "what-if" analysis without mutation
+- Full audit trail
+
+**Cons:**
+- Significantly more complex
+- Additional storage requirements
+- Snapshot management overhead
+
+**Recommendation:** Defer to post-MVP.
+
+#### Approach 3: Incremental Delta Recalculation
+
+**How it works:**
+- Track rating deltas per match, not absolute ratings
+- On update, calculate new deltas and propagate changes
+
+**Why it doesn't work for Glicko-2:**
+- Glicko-2 is non-linear (RD and volatility interact)
+- Can't simply add/subtract deltas
+- Each calculation depends on opponent ratings at that moment
+
+**Recommendation:** Not viable for this rating system.
+
+### Implementation Plan for Match Updates
+
+**Phase 0 Tasks (Foundation):**
+
+| Task | Hours | Description |
+|------|-------|-------------|
+| Add `updated_at` timestamps to all models | 2 | Track when records change |
+| Create `MatchUpdate` schema with validation | 3 | Define what can/cannot be updated |
+| Implement optimistic locking | 2 | Prevent concurrent update conflicts |
+| Add match versioning/audit table | 4 | Track change history |
+
+**Phase 1 Tasks (Core Implementation):**
+
+| Task | Hours | Description |
+|------|-------|-------------|
+| Implement rating snapshot storage | 4 | Store rating state before each match |
+| Build forward recalculation service | 8 | Core algorithm implementation |
+| Create `PUT /matches/{id}` endpoint | 4 | API with validation and cascade trigger |
+| Add recalculation progress tracking | 3 | For long-running operations |
+| Build rollback capability | 4 | Undo failed recalculations |
+| Comprehensive test suite | 6 | Edge cases, concurrent updates |
+
+**Total: ~40 hours**
+
+### Validation Rules for Match Updates
+
+To prevent invalid updates that would corrupt the rating system:
+
+1. **Immutable After Threshold:**
+   ```python
+   MAX_UPDATE_AGE_DAYS = 30  # Configurable
+   if (datetime.now() - match.played_at).days > MAX_UPDATE_AGE_DAYS:
+       raise MatchTooOldToUpdateError()
+   ```
+
+2. **Cannot Change Game:**
+   ```python
+   if update.game_id and update.game_id != match.game_id:
+       raise CannotChangeMatchGameError()
+   ```
+
+3. **Player Changes Require Full Recalculation:**
+   ```python
+   if set(update.player_ids) != set(original.player_ids):
+       # Must recalculate from this match forward
+       requires_cascade = True
+   ```
+
+4. **Concurrent Update Protection:**
+   ```python
+   if match.version != update.expected_version:
+       raise ConcurrentModificationError()
+   ```
+
+5. **Outcome Validation:**
+   ```python
+   if not is_valid_outcome(update.outcome, match.game):
+       raise InvalidOutcomeError()
+   ```
+
+### User Experience Considerations
+
+1. **Warning Before Cascade:**
+   ```
+   "Updating this match will recalculate ratings for 47 subsequent matches.
+    This may take up to 30 seconds. Continue?"
+   ```
+
+2. **Progress Indication:**
+   - Show recalculation progress for large cascades
+   - Allow background processing with notification on completion
+
+3. **Preview Changes:**
+   - Show rating diffs before confirming update
+   - "Alice: 1520 → 1485 (-35), Bob: 1480 → 1515 (+35)"
+
+4. **Audit Log:**
+   - Record who changed what, when
+   - Enable undo within a time window
 
 ---
 
@@ -166,19 +572,21 @@ The path to MVP completion requires approximately **150-200 hours of development
 
 ### Data Flow for Key Operations
 
-**Recording a Match:**
+**Recording a Match (Target Flow After Phase 0A):**
 ```
 User → Frontend Form → POST /matches/ → match_service.process_new_match()
+  → Begin transaction
   → Create Match + MatchParticipant records
   → get_or_create_game_profile() for each player
   → Store rating_info_before
-  → Commit to DB
   → Dispatch to rating engine (glicko2_engine.update_ratings_for_match)
   → Calculate new ratings per Glicko-2 algorithm
   → Update GameProfile.rating_info
   → Store rating_info_change
+  → Commit entire transaction (match + ratings atomically)
   → Return complete Match object → Frontend displays result
 ```
+*Note: Current implementation incorrectly commits before rating calculation. See Phase 0A for fix.*
 
 **Matchmaking (Planned):**
 ```
@@ -199,33 +607,171 @@ User → Select players + constraints → POST /matchmaking/generate
 
 ## Development Roadmap
 
-### Phase 0: Foundation & Cleanup
-**Goal:** Establish solid foundation, clean up technical debt, and set up for productive development
+### Phase 0: Foundation Refactoring & Production-Quality Standards
+**Goal:** Aggressively refactor existing code to production-quality standards before adding new features. This phase is critical—building on a weak foundation will compound technical debt.
 
-**Tasks:**
+**Production-Quality Standards We're Targeting:**
+- All database operations are atomic and properly handle failures
+- All API inputs are validated with meaningful error messages
+- All JSON fields have typed schemas
+- Connection management is production-ready
+- Test coverage > 85% with error scenario coverage
+- No silent failures anywhere in the codebase
 
-| Task | Hours | Priority |
-|------|-------|----------|
-| Consolidate import scripts into single configurable importer | 3-4 | Medium |
-| Externalize database URL to environment variables | 1 | High |
-| Add proper error handling for edge cases (replace TODO comments) | 2-3 | High |
-| Create GameProfile Pydantic schemas for API responses | 2-3 | High |
-| Add leaderboard endpoint: `GET /games/{game_id}/leaderboard` | 3-4 | High |
-| Add player stats endpoint: `GET /players/{player_id}/stats` | 3-4 | High |
-| Add match history endpoint: `GET /players/{player_id}/matches` | 2-3 | Medium |
-| Add health check endpoint: `GET /health` | 0.5 | Medium |
-| Increase Glicko-2 test coverage for edge cases | 3-4 | Medium |
-| Set up Docker development environment | 3-4 | Medium |
+---
 
-**Estimated Total:** 23-30 hours (5-10 weeks at 3-6 hrs/week)
+#### Phase 0A: Critical Infrastructure Fixes (MUST DO FIRST)
+
+These issues will cause production failures and must be fixed before any other work.
+
+| Task | Hours | Priority | Issue Addressed |
+|------|-------|----------|-----------------|
+| Externalize DATABASE_URL to environment variable | 1 | CRITICAL | Hardcoded SQLite path |
+| Add connection pool configuration | 2 | CRITICAL | No pool settings |
+| Fix transaction atomicity in match_service | 4 | CRITICAL | Ratings can be inconsistent |
+| Add try-except with rollback to get_db() | 1 | CRITICAL | No error handling |
+| Add FastAPI lifespan for connection cleanup | 2 | HIGH | Resource leaks |
+
+**Subtotal:** 10 hours
 
 **Completion Criteria:**
-- [ ] All environment configuration externalized
-- [ ] Zero TODO comments in production code
-- [ ] Leaderboard and player stats endpoints functional
-- [ ] API fully documented in OpenAPI spec
-- [ ] Docker development environment works end-to-end
+- [ ] Application starts with DATABASE_URL environment variable
+- [ ] Connection pool configured with pool_size, max_overflow, pool_pre_ping
+- [ ] Match creation is fully atomic (match + ratings in single transaction)
+- [ ] Database errors result in proper rollback
+
+---
+
+#### Phase 0B: Data Layer Refactoring
+
+The data layer has the most issues and requires significant restructuring.
+
+**Database Models Refactoring:**
+
+| Task | Hours | Priority | Issue Addressed |
+|------|-------|----------|-----------------|
+| Add database indexes to foreign key columns | 2 | HIGH | Full table scans |
+| Add `created_at`, `updated_at` to GameProfile, Match, MatchParticipant | 3 | HIGH | No audit trail |
+| Add `version` column for optimistic locking | 2 | HIGH | Concurrent update conflicts |
+| Standardize rating_info keys (rating, rd, sigma) | 3 | HIGH | Inconsistent key names |
+| Add `deleted_at` for soft delete support | 2 | MEDIUM | Data loss on delete |
+| Fix cascade behavior on Player.match_participations | 1 | MEDIUM | Orphaned records |
+| Create Alembic migration for all schema changes | 3 | HIGH | Apply changes safely |
+
+**Subtotal:** 16 hours
+
+**Pydantic Schema Refactoring:**
+
+| Task | Hours | Priority | Issue Addressed |
+|------|-------|----------|-----------------|
+| Create TypedDict/Pydantic models for rating_info | 3 | HIGH | Unvalidated JSON |
+| Create outcome schema variants (Binary, Ranked) | 4 | HIGH | Accepts any dict |
+| Create RatingStrategy enum, validate in GameCreate | 2 | HIGH | Invalid strategies accepted |
+| Add field validation (min/max length, patterns) | 2 | HIGH | No input validation |
+| Add rating_info_before/change to MatchParticipantRead | 1 | MEDIUM | Missing in responses |
+| Create GameProfile schemas for leaderboard | 2 | MEDIUM | Missing schemas |
+| Create MatchUpdate schema with validation rules | 3 | HIGH | For update cascade feature |
+
+**Subtotal:** 17 hours
+
+**Service Layer Refactoring:**
+
+| Task | Hours | Priority | Issue Addressed |
+|------|-------|----------|-----------------|
+| Rewrite match_service with proper transaction boundaries | 4 | CRITICAL | Broken atomicity |
+| Add participant validation (min 2, no duplicates, valid teams) | 3 | HIGH | Invalid matches accepted |
+| Move default rating to Game model (configurable per-game) | 2 | MEDIUM | Hardcoded defaults |
+| Replace silent failures with explicit errors in glicko2_engine | 2 | HIGH | Silent skips |
+| Create custom exception hierarchy | 3 | HIGH | Generic ValueError usage |
+| Add structured logging throughout | 3 | MEDIUM | No request logging |
+
+**Subtotal:** 17 hours
+
+---
+
+#### Phase 0C: API Layer Improvements
+
+| Task | Hours | Priority | Issue Addressed |
+|------|-------|----------|-----------------|
+| Add pagination to all list endpoints | 4 | CRITICAL | Returns all records |
+| Add filtering (by game_id, player_id, date range) | 3 | HIGH | No filtering |
+| Add sorting options | 2 | MEDIUM | Hardcoded order |
+| Catch IntegrityError, return proper HTTPException | 2 | HIGH | Raw DB errors |
+| Add GET /games/{game_id}/leaderboard endpoint | 4 | HIGH | Missing core feature |
+| Add GET /players/{player_id}/stats endpoint | 4 | HIGH | Missing core feature |
+| Add GET /players/{player_id}/matches endpoint | 3 | MEDIUM | Missing feature |
+| Add GET /health endpoint | 1 | MEDIUM | No health check |
+| Add global exception handler | 2 | MEDIUM | Inconsistent errors |
+| Add request/response logging middleware | 2 | MEDIUM | No audit trail |
+
+**Subtotal:** 27 hours
+
+---
+
+#### Phase 0D: Test Coverage Expansion
+
+| Task | Hours | Priority | Issue Addressed |
+|------|-------|----------|-----------------|
+| Add error scenario tests (duplicates, not found, invalid) | 4 | HIGH | No error tests |
+| Add transaction rollback tests | 3 | HIGH | Untested atomicity |
+| Add validation tests (invalid outcomes, teams, empty) | 3 | HIGH | No validation tests |
+| Add Glicko-2 edge case tests (extreme RD, rating diffs) | 3 | MEDIUM | Math edge cases |
+| Add API pagination/filtering tests | 2 | MEDIUM | New features |
+| Add concurrent operation tests | 4 | MEDIUM | Race conditions |
+| Achieve 85%+ coverage | 3 | HIGH | Current gaps |
+
+**Subtotal:** 22 hours
+
+---
+
+#### Phase 0E: Development Environment & Cleanup
+
+| Task | Hours | Priority | Issue Addressed |
+|------|-------|----------|-----------------|
+| Set up Docker development environment | 4 | HIGH | Inconsistent setup |
+| Create docker-compose with PostgreSQL | 2 | HIGH | SQLite limitations |
+| Consolidate 24 import scripts into single importer | 4 | LOW | Script sprawl |
+| Update README with new setup instructions | 2 | MEDIUM | Outdated docs |
+| Create .env.example with all variables | 1 | HIGH | Missing template |
+
+**Subtotal:** 13 hours
+
+---
+
+#### Phase 0 Summary
+
+| Sub-Phase | Hours | Focus |
+|-----------|-------|-------|
+| 0A: Critical Infrastructure | 10 | Must fix first |
+| 0B: Data Layer | 50 | Models, schemas, services |
+| 0C: API Layer | 27 | Endpoints, error handling |
+| 0D: Test Coverage | 22 | Comprehensive testing |
+| 0E: Dev Environment | 13 | Docker, cleanup |
+| **Total** | **122** | **20-40 weeks at 3-6 hrs/week** |
+
+**Recommended Approach:** Complete Phase 0A first (2-3 weeks), then work through 0B-0E in parallel where possible. The data layer work (0B) should be prioritized as other work depends on it.
+
+**Completion Criteria:**
+- [ ] All critical infrastructure issues resolved
+- [ ] Database schema includes indexes, timestamps, versioning
+- [ ] All JSON fields have typed schemas with validation
+- [ ] Transaction atomicity verified with tests
+- [ ] API returns proper errors for all failure cases
+- [ ] Pagination works on all list endpoints
 - [ ] Test coverage > 85%
+- [ ] Docker development environment functional
+- [ ] Zero silent failures in codebase
+- [ ] All TODO comments replaced with implementations
+
+**Code That Should Be Rewritten (Not Just Refactored):**
+
+1. **match_service.process_new_match()** - Transaction handling is fundamentally broken. Needs complete rewrite with proper atomic boundaries.
+
+2. **get_db() in session.py** - Needs rewrite with error handling, proper lifecycle management, and configuration.
+
+3. **All Pydantic schemas** - Current approach of `pass` in child classes provides no value. Need complete redesign with proper validation.
+
+4. **Error handling throughout** - No consistent pattern exists. Need custom exception hierarchy and global handler.
 
 ---
 
@@ -937,15 +1483,31 @@ Types: feat, fix, docs, refactor, test, chore
 
 | Phase | Duration | Hours | Target Completion |
 |-------|----------|-------|-------------------|
-| Phase 0: Foundation | 5-10 weeks | 23-30 | Week 10 |
-| Phase 1: Matchmaking | 8-16 weeks | 39-49 | Week 26 |
-| Phase 2: Frontend | 10-21 weeks | 50-64 | Week 47 |
-| Phase 3: Deployment | 6-13 weeks | 30-38 | Week 60 |
-| Phase 4: Documentation | 5-12 weeks | 28-35 | Week 72 |
+| Phase 0: Foundation Refactoring | 20-40 weeks | 122 | Week 40 |
+| Phase 1: Matchmaking + Match Updates | 12-20 weeks | 79-89 | Week 60 |
+| Phase 2: Frontend | 10-21 weeks | 50-64 | Week 81 |
+| Phase 3: Deployment | 6-13 weeks | 30-38 | Week 94 |
+| Phase 4: Documentation | 5-12 weeks | 28-35 | Week 106 |
 
-**Total: ~170-216 hours over 12-18 months**
+**Total: ~309-348 hours over 18-24 months**
 
-*Note: Phases can overlap. For example, documentation can start during Phase 2.*
+*Note: Phase 0 is significantly larger than originally estimated due to critical technical debt. This investment is necessary—building features on a broken foundation would multiply problems later.*
+
+**Phase 0 Breakdown:**
+| Sub-Phase | Hours | Can Parallelize? |
+|-----------|-------|------------------|
+| 0A: Critical Infrastructure | 10 | No - do first |
+| 0B: Data Layer | 50 | Yes, after 0A |
+| 0C: API Layer | 27 | Yes, after 0A |
+| 0D: Test Coverage | 22 | Yes, alongside 0B/0C |
+| 0E: Dev Environment | 13 | Yes, anytime |
+
+**Phase 1 now includes Match Update Cascade:**
+| Component | Hours |
+|-----------|-------|
+| Original matchmaking work | 39-49 |
+| Match update cascade implementation | 40 |
+| Total | 79-89 |
 
 ### Key Milestones
 
@@ -1101,35 +1663,57 @@ Types: feat, fix, docs, refactor, test, chore
 
 ## Next Immediate Actions
 
-Start here. These are the first tasks to tackle in order:
+Start here. These are the first tasks to tackle in order. **Phase 0A is critical and must be completed first.**
+
+### Week 1-2: Critical Infrastructure (Phase 0A)
 
 1. **Externalize Database Configuration** (1 hour)
    - Move database URL from [session.py](src/rankforge/db/session.py) to environment variable
-   - Update `.env.example` with required variables
+   - Create `.env.example` with `DATABASE_URL` template
    - Test with both SQLite and PostgreSQL connection strings
 
-2. **Add Leaderboard Endpoint** (3-4 hours)
-   - Create `GET /games/{game_id}/leaderboard` endpoint
-   - Return players sorted by rating with GameProfile info
-   - Add Pydantic schema for leaderboard response
-   - Write integration tests
+2. **Add Connection Pool Configuration** (2 hours)
+   - Configure `pool_size`, `max_overflow`, `pool_pre_ping` in engine creation
+   - Add FastAPI lifespan event for connection cleanup
+   - Test under simulated load
 
-3. **Add Player Stats Endpoint** (3-4 hours)
-   - Create `GET /players/{player_id}/stats` endpoint
-   - Aggregate win/loss/match counts per game
-   - Include rating info per game
-   - Write integration tests
+3. **Fix Transaction Atomicity in match_service** (4 hours)
+   - Rewrite `process_new_match()` to keep match creation and rating update in single transaction
+   - Move `glicko2_engine.update_ratings_for_match()` call BEFORE commit
+   - Add try-except with rollback on any failure
+   - Write test that verifies rollback on rating engine failure
 
-4. **Set Up Docker Development** (3-4 hours)
+4. **Add Error Handling to get_db()** (1 hour)
+   - Wrap session yield in try-except
+   - Explicit rollback on exception
+   - Add logging for database errors
+
+### Week 3-4: Begin Data Layer Refactoring (Phase 0B)
+
+5. **Add Database Indexes** (2 hours)
+   - Add indexes to foreign key columns in models.py
+   - Create Alembic migration
+   - Test query performance improvement
+
+6. **Standardize Rating Info Keys** (3 hours)
+   - Choose standard: `rating`, `rd`, `sigma`
+   - Update glicko2_engine.py, match_service.py, and all existing data
+   - Create migration script for existing database
+   - Update all tests
+
+7. **Create Typed Schemas for JSON Fields** (3 hours)
+   - Create `RatingInfo` TypedDict/Pydantic model
+   - Create `BinaryOutcome` and `RankedOutcome` schemas
+   - Update match.py schema to use discriminated union
+   - Add validation tests
+
+### Parallel: Development Environment
+
+8. **Set Up Docker Development** (4 hours)
    - Create Dockerfile for backend
    - Create docker-compose.yml with app + PostgreSQL
    - Document docker development workflow in README
-
-5. **Begin Matchmaking Design Document** (3-4 hours)
-   - Write out algorithm specification
-   - Define API contract for matchmaking endpoint
-   - Create service interface and schemas
-   - This becomes the foundation for Phase 1
+   - Test full workflow: build, migrate, run, test
 
 ---
 
