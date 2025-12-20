@@ -60,7 +60,9 @@ cover/
 local_settings.py
 db.sqlite3
 rankforge.db
+rankforge_copy.db
 .rankforge.db
+.rankforge_copy.db
 db.sqlite3-journal
 
 # Flask stuff:

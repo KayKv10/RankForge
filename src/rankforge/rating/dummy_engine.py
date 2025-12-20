@@ -42,5 +42,5 @@ async def update_ratings_for_match(db: AsyncSession, match: models.Match) -> Non
         # Add the modified profile to the session to mark it for an UPDATE.
         db.add(profile)
 
-    # We now need to commit the changes we've made to the GameProfiles.
-    await db.commit()
+    # Flush changes but don't commit - let the caller handle transaction boundaries
+    await db.flush()

@@ -300,4 +300,5 @@ async def update_ratings_for_match(db: AsyncSession, match: models.Match) -> Non
         db.add(profile_to_update)
         db.add(p)
 
-    await db.commit()
+    # Flush changes but don't commit - let the caller handle transaction boundaries
+    await db.flush()
