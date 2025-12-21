@@ -10,7 +10,7 @@ async def test_create_match(async_client: AsyncClient):
     """Test creating a new match with participants."""
     # 1. SETUP: Create a game and two players that will participate in the match.
     game_res = await async_client.post(
-        "/games/", json={"name": "Geoguessr", "rating_strategy": "glicko2_team_binary"}
+        "/games/", json={"name": "Geoguessr", "rating_strategy": "glicko2"}
     )
     assert game_res.status_code == 201
     game_id = game_res.json()["id"]
@@ -76,7 +76,7 @@ async def test_read_match(async_client: AsyncClient):
     """Test retrieving a single match by its ID."""
     # 1. SETUP: Create a game and players.
     game_res = await async_client.post(
-        "/games/", json={"name": "TestGame", "rating_strategy": "test"}
+        "/games/", json={"name": "TestGame", "rating_strategy": "glicko2"}
     )
     game_id = game_res.json()["id"]
 
@@ -132,7 +132,7 @@ async def test_list_matches(async_client: AsyncClient):
     """Test retrieving a list of all matches."""
     # 1. SETUP: Create a game and multiple players for different matches.
     game_res = await async_client.post(
-        "/games/", json={"name": "ListTestGame", "rating_strategy": "test"}
+        "/games/", json={"name": "ListTestGame", "rating_strategy": "glicko2"}
     )
     game_id = game_res.json()["id"]
 
@@ -145,7 +145,9 @@ async def test_list_matches(async_client: AsyncClient):
     # 2. CREATE two distinct matches to ensure the list endpoint works.
     match1_payload = {
         "game_id": game_id,
-        "participants": [{"player_id": player_c_id, "team_id": 1, "outcome": {}}],
+        "participants": [
+            {"player_id": player_c_id, "team_id": 1, "outcome": {"result": "win"}}
+        ],
     }
     match1_res = await async_client.post("/matches/", json=match1_payload)
     assert match1_res.status_code == 201
@@ -154,7 +156,9 @@ async def test_list_matches(async_client: AsyncClient):
     match2_payload = {
         "game_id": game_id,
         "match_metadata": {"notes": "Second match"},
-        "participants": [{"player_id": player_d_id, "team_id": 1, "outcome": {}}],
+        "participants": [
+            {"player_id": player_d_id, "team_id": 1, "outcome": {"result": "win"}}
+        ],
     }
     match2_res = await async_client.post("/matches/", json=match2_payload)
     assert match2_res.status_code == 201
@@ -189,7 +193,7 @@ async def test_delete_match(async_client: AsyncClient):
     """Test deleting a match."""
     # 1. SETUP: Create a game, a player, and a match to delete.
     game_res = await async_client.post(
-        "/games/", json={"name": "DeleteTestGame", "rating_strategy": "test"}
+        "/games/", json={"name": "DeleteTestGame", "rating_strategy": "glicko2"}
     )
     game_id = game_res.json()["id"]
     player_res = await async_client.post("/players/", json={"name": "Player E"})
@@ -197,7 +201,9 @@ async def test_delete_match(async_client: AsyncClient):
 
     match_payload = {
         "game_id": game_id,
-        "participants": [{"player_id": player_id, "team_id": 1, "outcome": {}}],
+        "participants": [
+            {"player_id": player_id, "team_id": 1, "outcome": {"result": "win"}}
+        ],
     }
     create_response = await async_client.post("/matches/", json=match_payload)
     assert create_response.status_code == 201

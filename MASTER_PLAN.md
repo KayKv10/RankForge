@@ -668,19 +668,28 @@ The data layer has the most issues and requires significant restructuring.
 - Migration handles SQLite constraints (constant defaults for ALTER TABLE)
 - All 24 tests passing, mypy clean, ruff clean
 
-**Pydantic Schema Refactoring:**
+**Pydantic Schema Refactoring:** ✅ COMPLETED (2025-12-20)
 
-| Task | Hours | Priority | Issue Addressed |
-|------|-------|----------|-----------------|
-| Create TypedDict/Pydantic models for rating_info | 3 | HIGH | Unvalidated JSON |
-| Create outcome schema variants (Binary, Ranked) | 4 | HIGH | Accepts any dict |
-| Create RatingStrategy enum, validate in GameCreate | 2 | HIGH | Invalid strategies accepted |
-| Add field validation (min/max length, patterns) | 2 | HIGH | No input validation |
-| Add rating_info_before/change to MatchParticipantRead | 1 | MEDIUM | Missing in responses |
-| Create GameProfile schemas for leaderboard | 2 | MEDIUM | Missing schemas |
-| Create MatchUpdate schema with validation rules | 3 | HIGH | For update cascade feature |
+| Task | Hours | Status | File(s) Modified |
+|------|-------|--------|------------------|
+| Create RatingStrategy enum, validate in GameCreate | 2 | ✅ Done | `src/rankforge/schemas/game.py` |
+| Create RatingInfo Pydantic model | 3 | ✅ Done | `src/rankforge/schemas/common.py` (NEW) |
+| Create outcome schema variants (Binary, Ranked) | 4 | ✅ Done | `src/rankforge/schemas/match.py` |
+| Add field validation (min/max length) | 2 | ✅ Done | `src/rankforge/schemas/player.py`, `game.py` |
+| Add rating_info_before/change to MatchParticipantRead | 1 | ✅ Done | `src/rankforge/schemas/match.py` |
+| Create GameProfile schemas for leaderboard | 2 | ✅ Done | `src/rankforge/schemas/game_profile.py` (NEW) |
+| Create MatchUpdate schema with validation rules | - | Deferred | Will implement in Phase 1 with match updates |
 
-**Subtotal:** 17 hours
+**Subtotal:** 14 hours
+
+**Implementation Notes:**
+- Created `RatingStrategy` enum with `GLICKO2` and `DUMMY` values
+- Created `RatingInfo` Pydantic model with proper validation (rating 0-4000, rd 0-500, vol 0-1.0)
+- Created flexible `BinaryOutcome` and `RankedOutcome` with `ConfigDict(extra="allow")` to support game-specific rating factors
+- Used discriminated union `Outcome = Annotated[Union[BinaryOutcome, RankedOutcome], Field()]`
+- Added field validation to Player (name: 2-100 chars) and Game (name: 2-200 chars)
+- Created `GameProfileRead` and `GameProfileWithPlayer` schemas for leaderboard support
+- All 24 tests passing, mypy clean, ruff clean
 
 **Service Layer Refactoring:**
 

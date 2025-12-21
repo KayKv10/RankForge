@@ -4,7 +4,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ===============================================
@@ -13,7 +13,12 @@ from pydantic import BaseModel, ConfigDict
 class PlayerBase(BaseModel):
     """Shared properties for a player."""
 
-    name: str
+    name: str = Field(
+        ...,
+        min_length=2,
+        max_length=100,
+        description="Player name (2-100 characters)",
+    )
 
 
 # ===============================================
@@ -31,7 +36,7 @@ class PlayerCreate(PlayerBase):
 class PlayerUpdate(BaseModel):
     """Properties to receive via API on update, all optional."""
 
-    name: str | None = None
+    name: str | None = Field(None, min_length=2, max_length=100)
 
 
 # ===============================================

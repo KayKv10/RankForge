@@ -3,10 +3,51 @@
 """Pydantic schemas for the Match resource."""
 
 from datetime import datetime
+from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .common import RatingInfo
 from .player import PlayerRead
+
+# ===============================================
+# == Outcome Schema Variants
+# ===============================================
+
+
+class BinaryOutcome(BaseModel):
+    """Outcome for win/loss/draw matches.
+
+    Examples:
+        {"result": "win"}
+        {"result": "loss", "score": 24150}
+        {"result": "win", "is_tournament": true, "individual_performance": 0.8}
+    """
+
+    result: Literal["win", "loss", "draw"]
+
+    # Allow extra fields for game-specific data (tournament flags, scores, etc.)
+    model_config = ConfigDict(extra="allow")
+
+
+class RankedOutcome(BaseModel):
+    """Outcome for ranked/placement matches (FFA or team rankings).
+
+    Examples:
+        {"rank": 1}
+        {"rank": 2, "points": 850, "was_serving": true}
+    """
+
+    rank: int = Field(..., ge=1, description="Placement (1 = first place)")
+
+    # Allow extra fields for game-specific data
+    model_config = ConfigDict(extra="allow")
+
+
+# Union type that accepts either outcome format
+# Pydantic will try BinaryOutcome first (has 'result'), then RankedOutcome (has 'rank')
+Outcome = Annotated[Union[BinaryOutcome, RankedOutcome], Field()]
+
 
 # ===============================================
 # == Match Participant Schemas
@@ -17,10 +58,10 @@ class MatchParticipantBase(BaseModel):
     """Shared properties for a match participant."""
 
     player_id: int
-    team_id: int
+    team_id: int = Field(..., ge=0, description="Team identifier (0+ for grouping)")
 
-    # The `outcome` is a flexible JSON field to store results
-    outcome: dict
+    # Outcome using typed variants (BinaryOutcome or RankedOutcome)
+    outcome: Outcome
 
 
 class MatchParticipantCreate(MatchParticipantBase):
@@ -36,6 +77,11 @@ class MatchParticipantRead(MatchParticipantBase):
 
     # Instead of just a player_id, return the full Player object.
     player: PlayerRead
+
+    # Rating history for auditing and analysis
+    rating_info_before: RatingInfo | None = None
+    # Structure: {rating_change, rd_change, vol_change}
+    rating_info_change: dict | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

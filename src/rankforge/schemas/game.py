@@ -2,7 +2,19 @@
 
 """Pydantic schemas for the Game resource."""
 
-from pydantic import BaseModel, ConfigDict
+from enum import Enum
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+# ===============================================
+# Enums
+# ===============================================
+class RatingStrategy(str, Enum):
+    """Valid rating calculation strategies."""
+
+    GLICKO2 = "glicko2"
+    DUMMY = "dummy"
 
 
 # ===============================================
@@ -11,9 +23,9 @@ from pydantic import BaseModel, ConfigDict
 class GameBase(BaseModel):
     """Shared attributes for a game."""
 
-    name: str
-    rating_strategy: str
-    description: str | None = None
+    name: str = Field(..., min_length=2, max_length=200)
+    rating_strategy: RatingStrategy
+    description: str | None = Field(None, max_length=1000)
 
 
 # ===============================================
@@ -33,9 +45,9 @@ class GameUpdate(BaseModel):
     """Properties to receive via API on update."""
 
     # When updating, all fields should be optional.
-    name: str | None = None
-    rating_strategy: str | None = None
-    description: str | None = None
+    name: str | None = Field(None, min_length=2, max_length=200)
+    rating_strategy: RatingStrategy | None = None
+    description: str | None = Field(None, max_length=1000)
 
 
 # ===============================================

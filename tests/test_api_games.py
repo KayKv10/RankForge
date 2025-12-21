@@ -15,7 +15,7 @@ async def test_create_game(async_client: AsyncClient):
     )
     game_payload = {
         "name": "Geoguessr",
-        "rating_strategy": "glicko2_team_binary",
+        "rating_strategy": "glicko2",
         "description": description,
     }
 
@@ -41,7 +41,7 @@ async def test_read_game(async_client: AsyncClient):
     # 1. Create a game to ensure there's data to fetch.
     game_payload = {
         "name": "Codenames",
-        "rating_strategy": "elo_team_duel",
+        "rating_strategy": "glicko2",
         "description": "A word association game for two teams.",
     }
     create_response = await async_client.post("/games/", json=game_payload)
@@ -64,10 +64,10 @@ async def test_list_games(async_client: AsyncClient):
     """Test retrieving a list of all games."""
     # 1. Create two distinct games to ensure the list endpoint works
     #    with multiple items.
-    game1_payload = {"name": "Air Hockey", "rating_strategy": "elo_1v1"}
+    game1_payload = {"name": "Air Hockey", "rating_strategy": "glicko2"}
     game2_payload = {
         "name": "Golf With Friends",
-        "rating_strategy": "golf_lowest_score",
+        "rating_strategy": "dummy",
     }
 
     await async_client.post("/games/", json=game1_payload)
@@ -96,7 +96,7 @@ async def test_update_game(async_client: AsyncClient):
     # 1. Define  a game to update.
     original_payload = {
         "name": "Padel",
-        "rating_strategy": "elo_1v1",
+        "rating_strategy": "glicko2",
         "description": "A classic two-player padel ball game.",
     }
     create_response = await async_client.post("/games/", json=original_payload)
@@ -132,7 +132,7 @@ async def test_update_game(async_client: AsyncClient):
 async def test_delete_game(async_client: AsyncClient):
     """Test deleting a game."""
     # 1. Create a game to delete.
-    payload = {"name": "Temporary Game", "rating_strategy": "temp"}
+    payload = {"name": "Temporary Game", "rating_strategy": "dummy"}
     create_response = await async_client.post("/games/", json=payload)
     assert create_response.status_code == 201
     game_id = create_response.json()["id"]
