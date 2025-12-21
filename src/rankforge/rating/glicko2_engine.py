@@ -1,17 +1,27 @@
-# src/rankforge/glicko2_engine.py
+# src/rankforge/rating/glicko2_engine.py
 
 """
 A from-scratch implementation of the Glicko-2 rating system.
-The formulas and steps are bsaed on the paper by Dr. Mark Glickman:
+The formulas and steps are based on the paper by Dr. Mark Glickman:
 https://www.glicko.net/glicko/glicko2.pdf
 """
 
+from __future__ import annotations
+
+import logging
 import math
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from rankforge.db import models
+from rankforge.exceptions import (
+    GameProfileNotFoundError,
+    NonCompetitiveMatchError,
+    RatingCalculationError,
+)
+
+logger = logging.getLogger(__name__)
 
 # ===============================================
 # == Glicko-2 Core Implementation
@@ -179,12 +189,15 @@ def _calculate_player_scores(match: models.Match) -> dict[int, float]:
     - Prioritizes win/loss results for binary outcomes.
     - For ranked games, normalizes score based on the number of competing
       entities (teams or individual players in an FFA).
-    - Defaults to 0.5 (draw) if outcome is not recognized.
 
     Returns:
         A dictionary mapping player_id to their calculated score.
+
+    Raises:
+        NonCompetitiveMatchError: If match has fewer than 2 teams
+        RatingCalculationError: If a player has missing/invalid outcome data
     """
-    player_scores = {}
+    player_scores: dict[int, float] = {}
 
     # Check for simple win/loss first, as it's the most direct outcome
     has_win_loss = any(
@@ -197,8 +210,14 @@ def _calculate_player_scores(match: models.Match) -> dict[int, float]:
                 player_scores[p.player_id] = 1.0
             elif result == "loss":
                 player_scores[p.player_id] = 0.0
+            elif result == "draw":
+                player_scores[p.player_id] = 0.5
             else:
-                player_scores[p.player_id] = 0.5  # Draw or other
+                # Has win/loss outcomes but this player has invalid result
+                raise RatingCalculationError(
+                    f"Invalid outcome result '{result}' for player {p.player_id}",
+                    player_id=p.player_id,
+                )
         return player_scores
 
     # If no win/loss, proceed with ranked logic
@@ -207,11 +226,9 @@ def _calculate_player_scores(match: models.Match) -> dict[int, float]:
     num_competitors = len(team_ids)
     num_opponents = num_competitors - 1
 
-    if num_opponents <= 0:  # Not a competitive match
-        for p in match.participants:
-            player_scores[p.player_id] = 0.5
-            # TODO: Raise an error here
-        return player_scores
+    if num_opponents <= 0:
+        # This should have been caught by validation, but raise defensively
+        raise NonCompetitiveMatchError(num_competitors)
 
     # Map team_id to its rank for easy lookup
     team_ranks = {p.team_id: p.outcome.get("rank") for p in match.participants}
@@ -219,12 +236,16 @@ def _calculate_player_scores(match: models.Match) -> dict[int, float]:
     for p in match.participants:
         rank = team_ranks.get(p.team_id)
 
-        if rank is not None and isinstance(rank, int):
+        if rank is not None and isinstance(rank, int) and rank >= 1:
             # Normalized score: (NumOpponents - (Rank - 1)) / NumOpponents
             score = (num_opponents - (rank - 1)) / float(num_opponents)
             player_scores[p.player_id] = score
         else:
-            player_scores[p.player_id] = 0.5  # Default for missing/invalid rank
+            # Invalid or missing rank - raise explicit error
+            raise RatingCalculationError(
+                f"Missing or invalid rank for player {p.player_id}: got {rank}",
+                player_id=p.player_id,
+            )
 
     return player_scores
 
@@ -232,18 +253,31 @@ def _calculate_player_scores(match: models.Match) -> dict[int, float]:
 async def update_ratings_for_match(db: AsyncSession, match: models.Match) -> None:
     """
     Updates player ratings for a completed match using the Glicko-2 implementation.
+
+    Raises:
+        GameProfileNotFoundError: If a participant's profile is missing
+        NonCompetitiveMatchError: If match has fewer than 2 teams
+        RatingCalculationError: If rating calculation fails
     """
+    logger.debug(
+        "Starting Glicko-2 rating update",
+        extra={"match_id": match.id, "participant_count": len(match.participants)},
+    )
+
     engine = Glicko2Engine()
-    player_profiles = {}
-    player_ratings = {}
+    player_profiles: dict[int, models.GameProfile] = {}
+    player_ratings: dict[int, Glicko2Rating] = {}
 
     # 1. Fetch all profiles and create Glicko2Rating objects
+    # Profiles MUST exist - they should have been created by match_service
     for p in match.participants:
         profile = await models.GameProfile.find_by_player_and_game(
             db, p.player_id, match.game_id
         )
         if not profile:
-            continue
+            # This indicates a bug - profiles should be created before rating
+            raise GameProfileNotFoundError(p.player_id, match.game_id)
+
         player_profiles[p.player_id] = profile
         player_ratings[p.player_id] = Glicko2Rating(
             mu=profile.rating_info["rating"],
@@ -251,13 +285,28 @@ async def update_ratings_for_match(db: AsyncSession, match: models.Match) -> Non
             sigma=profile.rating_info["vol"],
         )
 
+    logger.debug("All profiles loaded", extra={"player_count": len(player_profiles)})
+
     # 2. Calculate a normalized performance score for each player from the match outcome
+    # This may raise NonCompetitiveMatchError or RatingCalculationError
     player_scores = _calculate_player_scores(match)
-    new_ratings = {}
+    new_ratings: dict[int, Glicko2Rating] = {}
 
     # 3. For each player, calculate their new rating
     for p1 in match.participants:
-        opponents_data = []
+        # Validate player exists in our lookups
+        if p1.player_id not in player_ratings:
+            raise RatingCalculationError(
+                f"Player {p1.player_id} missing from ratings lookup",
+                player_id=p1.player_id,
+            )
+        if p1.player_id not in player_scores:
+            raise RatingCalculationError(
+                f"Player {p1.player_id} missing from scores lookup",
+                player_id=p1.player_id,
+            )
+
+        opponents_data: list[tuple[Glicko2Rating, float]] = []
         p1_score = player_scores[p1.player_id]
 
         for p2 in match.participants:
@@ -273,11 +322,14 @@ async def update_ratings_for_match(db: AsyncSession, match: models.Match) -> Non
         current_rating = player_ratings[p1.player_id]
         new_ratings[p1.player_id] = engine.rate(current_rating, opponents_data)
 
-    # 3. Persist the new ratings to the database
+    # 4. Persist the new ratings to the database
     for p in match.participants:
         player_id = p.player_id
         if player_id not in new_ratings:
-            continue
+            raise RatingCalculationError(
+                f"No new rating calculated for player {player_id}",
+                player_id=player_id,
+            )
 
         profile_to_update = player_profiles[player_id]
         updated_rating = new_ratings[player_id]
@@ -299,6 +351,8 @@ async def update_ratings_for_match(db: AsyncSession, match: models.Match) -> Non
         p.rating_info_change = rating_change
         db.add(profile_to_update)
         db.add(p)
+
+    logger.debug("Glicko-2 ratings updated", extra={"match_id": match.id})
 
     # Flush changes but don't commit - let the caller handle transaction boundaries
     await db.flush()

@@ -91,10 +91,11 @@ async def test_process_new_match_updates_player_stats(db_session: AsyncSession):
     Verify that the full match processing pipeline calls the rating engine
     and that the engine's changes are persisted to the database.
     """
-    # 1. SETUP: Create a game, player, and a pre-existing GameProfile.
+    # 1. SETUP: Create a game, two players, and a pre-existing GameProfile.
     game = Game(name="Stat Test Game", rating_strategy="test")
     player = Player(name="StatPlayer")
-    db_session.add_all([game, player])
+    opponent = Player(name="StatOpponent")
+    db_session.add_all([game, player, opponent])
     await db_session.commit()
 
     # The player's profile shows they have played 5 matches already.
@@ -104,16 +105,25 @@ async def test_process_new_match_updates_player_stats(db_session: AsyncSession):
         rating_info={"rating": 1550},
         stats={"matches_played": 5},
     )
-    db_session.add(profile)
+    opponent_profile = GameProfile(
+        player_id=opponent.id,
+        game_id=game.id,
+        rating_info={"rating": 1500},
+        stats={"matches_played": 0},
+    )
+    db_session.add_all([profile, opponent_profile])
     await db_session.commit()
 
-    # 2. PREPARE INPUT: Create the Pydantic schema for the new match.
+    # 2. PREPARE INPUT: Create the Pydantic schema for the new match (1v1).
     match_in = MatchCreate(
         game_id=game.id,
         participants=[
             MatchParticipantCreate(
                 player_id=player.id, team_id=1, outcome={"result": "win"}
-            )
+            ),
+            MatchParticipantCreate(
+                player_id=opponent.id, team_id=2, outcome={"result": "loss"}
+            ),
         ],
     )
 

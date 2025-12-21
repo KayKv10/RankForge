@@ -86,11 +86,17 @@ class SoftDeleteMixin:
 
 
 class Player(Base, SoftDeleteMixin):
-    """Represents a unique person across all games."""
+    """Represents a unique person across all games.
+
+    Attributes:
+        is_anonymous: If True, this player represents an unknown/one-time
+            participant who should be excluded from leaderboards.
+    """
 
     __tablename__ = "players"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    is_anonymous: Mapped[bool] = mapped_column(default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc),
         nullable=False,

@@ -9,6 +9,11 @@ from sqlalchemy.orm import selectinload
 
 from rankforge.db.models import Match, MatchParticipant
 from rankforge.db.session import get_db
+from rankforge.exceptions import (
+    RatingEngineError,
+    ResourceNotFoundError,
+    ValidationError,
+)
 from rankforge.schemas import match as match_schema
 from rankforge.services import match_service
 
@@ -44,9 +49,40 @@ async def create_match(
 ) -> Match:
     """
     Create a new match, process ratings, and return the created match.
+
+    Participants can specify:
+    - player_id: Reference to an existing player
+    - player_id=None: Create an anonymous player for this match
+
+    Raises:
+        404: If game_id or player_id doesn't exist
+        422: If validation fails (< 2 participants, duplicates, < 2 teams)
+        500: If rating calculation fails
     """
-    created_match = await match_service.process_new_match(db, match_in)
-    return created_match
+    try:
+        created_match = await match_service.process_new_match(db, match_in)
+        return created_match
+
+    except ResourceNotFoundError as e:
+        # GameNotFoundError, PlayerNotFoundError -> 404
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=e.message,
+        )
+
+    except ValidationError as e:
+        # ParticipantValidationError variants -> 422
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=e.message,
+        )
+
+    except RatingEngineError:
+        # Rating calculation failures -> 500
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Rating calculation failed. Please try again.",
+        )
 
 
 @router.get("/{match_id}", response_model=match_schema.MatchRead)

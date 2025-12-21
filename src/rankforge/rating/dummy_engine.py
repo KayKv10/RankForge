@@ -2,10 +2,17 @@
 
 """A dummy rating engine for testing the service layer architecture."""
 
+from __future__ import annotations
+
+import logging
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from rankforge.db import models
+from rankforge.exceptions import GameProfileNotFoundError
+
+logger = logging.getLogger(__name__)
 
 
 async def update_ratings_for_match(db: AsyncSession, match: models.Match) -> None:
@@ -19,7 +26,15 @@ async def update_ratings_for_match(db: AsyncSession, match: models.Match) -> Non
     This dummy implementation finds the GameProfile for each participant and
     increments their 'matches_played' stat. This proves the end-to-end
     pipeline from service to engine to database update.
+
+    Raises:
+        GameProfileNotFoundError: If a participant's profile is missing
     """
+    logger.debug(
+        "Starting dummy rating update",
+        extra={"match_id": match.id, "participant_count": len(match.participants)},
+    )
+
     # Loop through each participant in the match object that was passed in.
     for participant in match.participants:
         query = select(models.GameProfile).where(
@@ -27,7 +42,10 @@ async def update_ratings_for_match(db: AsyncSession, match: models.Match) -> Non
             models.GameProfile.game_id == match.game_id,
         )
         result = await db.execute(query)
-        profile = result.scalar_one()
+        profile = result.scalar_one_or_none()
+
+        if not profile:
+            raise GameProfileNotFoundError(participant.player_id, match.game_id)
 
         # Get the current stat value, defaulting to 0 if it doesn't exist.
         current_matches_played = profile.stats.get("matches_played", 0)
@@ -41,6 +59,8 @@ async def update_ratings_for_match(db: AsyncSession, match: models.Match) -> Non
 
         # Add the modified profile to the session to mark it for an UPDATE.
         db.add(profile)
+
+    logger.debug("Dummy ratings updated", extra={"match_id": match.id})
 
     # Flush changes but don't commit - let the caller handle transaction boundaries
     await db.flush()

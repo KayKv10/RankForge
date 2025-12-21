@@ -57,7 +57,6 @@ Outcome = Annotated[Union[BinaryOutcome, RankedOutcome], Field()]
 class MatchParticipantBase(BaseModel):
     """Shared properties for a match participant."""
 
-    player_id: int
     team_id: int = Field(..., ge=0, description="Team identifier (0+ for grouping)")
 
     # Outcome using typed variants (BinaryOutcome or RankedOutcome)
@@ -65,15 +64,27 @@ class MatchParticipantBase(BaseModel):
 
 
 class MatchParticipantCreate(MatchParticipantBase):
-    """Properties to receive when creating a participant within a match."""
+    """Properties to receive when creating a participant within a match.
 
-    pass
+    The player_id can be:
+    - An integer: Reference to an existing player
+    - None: Create a new anonymous player for this match
+
+    Anonymous players are auto-created with unique names and marked with
+    is_anonymous=True, allowing them to be filtered from leaderboards.
+    """
+
+    player_id: int | None = Field(
+        default=None,
+        description="Player ID, or None to create an anonymous player",
+    )
 
 
 class MatchParticipantRead(MatchParticipantBase):
     """Properties to return to the client for a match participant."""
 
     id: int
+    player_id: int
 
     # Instead of just a player_id, return the full Player object.
     player: PlayerRead

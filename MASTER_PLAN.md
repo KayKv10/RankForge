@@ -691,18 +691,35 @@ The data layer has the most issues and requires significant restructuring.
 - Created `GameProfileRead` and `GameProfileWithPlayer` schemas for leaderboard support
 - All 24 tests passing, mypy clean, ruff clean
 
-**Service Layer Refactoring:**
+**Service Layer Refactoring:** ✅ COMPLETED (2025-12-20)
 
-| Task | Hours | Priority | Issue Addressed |
-|------|-------|----------|-----------------|
-| Rewrite match_service with proper transaction boundaries | 4 | CRITICAL | Broken atomicity |
-| Add participant validation (min 2, no duplicates, valid teams) | 3 | HIGH | Invalid matches accepted |
-| Move default rating to Game model (configurable per-game) | 2 | MEDIUM | Hardcoded defaults |
-| Replace silent failures with explicit errors in glicko2_engine | 2 | HIGH | Silent skips |
-| Create custom exception hierarchy | 3 | HIGH | Generic ValueError usage |
-| Add structured logging throughout | 3 | MEDIUM | No request logging |
+| Task | Hours | Status | Issue Addressed |
+|------|-------|--------|-----------------|
+| Create custom exception hierarchy | 3 | ✅ Done | Generic ValueError usage |
+| Add anonymous player support (is_anonymous flag + migration) | 2 | ✅ Done | Support casual matches with unknown players |
+| Update match schema to allow optional player_id | 1 | ✅ Done | Enable auto-creation of anonymous players |
+| Add participant validation (min 2, no duplicates, 2+ teams) | 3 | ✅ Done | Invalid matches accepted |
+| Replace silent failures with explicit errors in glicko2_engine | 2 | ✅ Done | Silent skips |
+| Update dummy_engine for consistency with exception handling | 1 | ✅ Done | Consistency across rating engines |
+| Add API exception handlers in match.py | 2 | ✅ Done | Map exceptions to HTTP status codes |
+| Add structured logging throughout | 3 | ✅ Done | No request logging |
+| Move default rating to Game model (configurable per-game) | - | Deferred | Will implement in Phase 1 |
 
 **Subtotal:** 17 hours
+
+**Implementation Notes:**
+- Created `src/rankforge/exceptions.py` with custom exception hierarchy:
+  - `RankForgeError` (base) → `ResourceNotFoundError` (404) → `GameNotFoundError`, `PlayerNotFoundError`, `GameProfileNotFoundError`
+  - `RankForgeError` → `ValidationError` (422) → `InsufficientParticipantsError`, `DuplicatePlayerError`, `InsufficientTeamsError`
+  - `RankForgeError` → `RatingEngineError` (500) → `NonCompetitiveMatchError`, `RatingCalculationError`
+- Added `is_anonymous` boolean field to Player model with index for leaderboard filtering
+- Created migration `20251220_add_is_anonymous_to_players.py`
+- Match schema now accepts `player_id: int | None` - when None, uses shared "Unknown" player
+- Unknown player support: A single shared player named "Unknown" (with `is_anonymous=True`) is used for all unknown participants, avoiding database bloat. The Unknown player is exempt from duplicate validation, allowing multiple unknowns in one match.
+- Validation: minimum 2 participants, no duplicate players (except Unknown), at least 2 teams
+- All rating engines now raise exceptions instead of silent failures
+- API returns proper HTTP status codes: 404 (not found), 422 (validation), 500 (rating engine)
+- All 24 tests passing, mypy clean, ruff clean
 
 ---
 
@@ -1063,6 +1080,13 @@ The data layer has the most issues and requires significant restructuring.
    - Value: Data portability, analysis in other tools
    - Complexity: Low
    - Estimated effort: 3-4 hours
+
+9. **Claim Unknown Player History**
+   - Value: Convert a recurring unknown player's match history to a named player
+   - Use case: Someone who was initially "Unknown" becomes a regular, want to merge their history
+   - Implementation: Create endpoint to reassign all MatchParticipant records from Unknown player to a target player, then recalculate ratings from the earliest affected match forward
+   - Complexity: Medium (requires rating recalculation cascade)
+   - Estimated effort: 6-8 hours (depends on match update cascade from Phase 1)
 
 ### Long-term Vision (6+ months)
 

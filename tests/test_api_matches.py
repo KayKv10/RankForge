@@ -142,11 +142,13 @@ async def test_list_matches(async_client: AsyncClient):
     player_d_res = await async_client.post("/players/", json={"name": "Player D"})
     player_d_id = player_d_res.json()["id"]
 
-    # 2. CREATE two distinct matches to ensure the list endpoint works.
+    # 2. CREATE two distinct 1v1 matches to ensure the list endpoint works.
+    #    Each match requires at least 2 participants on different teams.
     match1_payload = {
         "game_id": game_id,
         "participants": [
-            {"player_id": player_c_id, "team_id": 1, "outcome": {"result": "win"}}
+            {"player_id": player_c_id, "team_id": 1, "outcome": {"result": "win"}},
+            {"player_id": player_d_id, "team_id": 2, "outcome": {"result": "loss"}},
         ],
     }
     match1_res = await async_client.post("/matches/", json=match1_payload)
@@ -157,7 +159,8 @@ async def test_list_matches(async_client: AsyncClient):
         "game_id": game_id,
         "match_metadata": {"notes": "Second match"},
         "participants": [
-            {"player_id": player_d_id, "team_id": 1, "outcome": {"result": "win"}}
+            {"player_id": player_d_id, "team_id": 1, "outcome": {"result": "win"}},
+            {"player_id": player_c_id, "team_id": 2, "outcome": {"result": "loss"}},
         ],
     }
     match2_res = await async_client.post("/matches/", json=match2_payload)
@@ -181,28 +184,35 @@ async def test_list_matches(async_client: AsyncClient):
     # Assert that both matches were found and their data is correct
     assert match1_data is not None
     assert match1_data["game_id"] == game_id
-    assert match1_data["participants"][0]["player"]["id"] == player_c_id
+    participant_ids_1 = {p["player"]["id"] for p in match1_data["participants"]}
+    assert player_c_id in participant_ids_1
 
     assert match2_data is not None
     assert match2_data["match_metadata"] == {"notes": "Second match"}
-    assert match2_data["participants"][0]["player"]["id"] == player_d_id
+    participant_ids_2 = {p["player"]["id"] for p in match2_data["participants"]}
+    assert player_d_id in participant_ids_2
 
 
 @pytest.mark.asyncio
 async def test_delete_match(async_client: AsyncClient):
     """Test deleting a match."""
-    # 1. SETUP: Create a game, a player, and a match to delete.
+    # 1. SETUP: Create a game, players, and a 1v1 match to delete.
     game_res = await async_client.post(
         "/games/", json={"name": "DeleteTestGame", "rating_strategy": "glicko2"}
     )
     game_id = game_res.json()["id"]
-    player_res = await async_client.post("/players/", json={"name": "Player E"})
-    player_id = player_res.json()["id"]
+
+    player1_res = await async_client.post("/players/", json={"name": "Player E"})
+    player1_id = player1_res.json()["id"]
+
+    player2_res = await async_client.post("/players/", json={"name": "Player F2"})
+    player2_id = player2_res.json()["id"]
 
     match_payload = {
         "game_id": game_id,
         "participants": [
-            {"player_id": player_id, "team_id": 1, "outcome": {"result": "win"}}
+            {"player_id": player1_id, "team_id": 1, "outcome": {"result": "win"}},
+            {"player_id": player2_id, "team_id": 2, "outcome": {"result": "loss"}},
         ],
     }
     create_response = await async_client.post("/matches/", json=match_payload)
