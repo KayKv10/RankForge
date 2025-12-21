@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, List
+from typing import Any, List, TypedDict
 
 from sqlalchemy import (
     JSON,
@@ -24,28 +24,91 @@ from sqlalchemy.orm import (
 
 Base = declarative_base()
 
+
+# ===============================================
+# Type Definitions for JSON Fields
+# ===============================================
+
+
+class RatingInfo(TypedDict):
+    """Standard rating info structure for Glicko-2.
+
+    Keys:
+        rating: The player's skill rating (default: 1500.0)
+        rd: Rating deviation / uncertainty (default: 350.0)
+        vol: Volatility / consistency (default: 0.06)
+    """
+
+    rating: float
+    rd: float
+    vol: float
+
+
+# ===============================================
+# Mixins for Common Columns
+# ===============================================
+
+
+class TimestampMixin:
+    """Mixin providing created_at and updated_at timestamp columns."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        default=None,
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=True,
+    )
+
+
+class VersionMixin:
+    """Mixin providing optimistic locking via version column."""
+
+    version: Mapped[int] = mapped_column(default=1, nullable=False)
+
+
+class SoftDeleteMixin:
+    """Mixin providing soft delete support via deleted_at column."""
+
+    deleted_at: Mapped[datetime | None] = mapped_column(default=None, nullable=True)
+
+    @property
+    def is_deleted(self) -> bool:
+        """Check if this record has been soft-deleted."""
+        return self.deleted_at is not None
+
+
 # ===============================================
 # Core Tables: Player and Game
 # ===============================================
 
 
-class Player(Base):
+class Player(Base, SoftDeleteMixin):
     """Represents a unique person across all games."""
 
     __tablename__ = "players"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(timezone.utc)
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
     )
-    # Optional: could store Discord ID, etc. for future integrations
+    updated_at: Mapped[datetime | None] = mapped_column(
+        default=None,
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=True,
+    )
+    version: Mapped[int] = mapped_column(default=1, nullable=False)
 
     # A player has a collection of profiles, one for each game they play
     game_profiles: Mapped[List["GameProfile"]] = relationship(
         back_populates="player", cascade="all, delete-orphan"
     )
+    # With soft delete, we use passive_deletes to preserve match history
     match_participations: Mapped[List["MatchParticipant"]] = relationship(
-        back_populates="player"
+        back_populates="player", passive_deletes=True
     )
 
     def __init__(self, name: str, **kw: Any):
@@ -53,7 +116,7 @@ class Player(Base):
         self.name = name
 
 
-class Game(Base):
+class Game(Base, TimestampMixin, VersionMixin, SoftDeleteMixin):
     """Represents a game that can be played."""
 
     __tablename__ = "games"
@@ -75,17 +138,20 @@ class Game(Base):
         super().__init__(**kw)
 
 
-class GameProfile(Base):
+class GameProfile(Base, TimestampMixin, VersionMixin, SoftDeleteMixin):
     """Stores a player's rating and stats for a specific game."""
 
     __tablename__ = "game_profiles"
     id: Mapped[int] = mapped_column(primary_key=True)
-    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), nullable=False)
-    game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), nullable=False)
+    player_id: Mapped[int] = mapped_column(
+        ForeignKey("players.id"), nullable=False, index=True
+    )
+    game_id: Mapped[int] = mapped_column(
+        ForeignKey("games.id"), nullable=False, index=True
+    )
 
-    # Flexible JSON blob to hold all rating info.
-    # Ex: {'main': {'rating': 1500, 'rd': 350}, 'solo': {'rating': 1400, 'rd': 300}}
-    # Ex: {'rating': 1500, 'rd': 350, 'volatility': 0.06}
+    # Rating info for Glicko-2: {'rating': 1500.0, 'rd': 350.0, 'vol': 0.06}
+    # See RatingInfo TypedDict for structure documentation
     rating_info: Mapped[dict] = mapped_column(JSON, nullable=False)
 
     # Flexible JSON blob for stats.
@@ -115,12 +181,15 @@ class GameProfile(Base):
 # ===============================================
 
 
-class Match(Base):
+class Match(Base, TimestampMixin, VersionMixin, SoftDeleteMixin):
     """Represents a single instance of a game being played."""
 
     __tablename__ = "matches"
     id: Mapped[int] = mapped_column(primary_key=True)
-    game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), nullable=False)
+    game_id: Mapped[int] = mapped_column(
+        ForeignKey("games.id"), nullable=False, index=True
+    )
+    # Business timestamp: when the match was actually played
     played_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc)
     )
@@ -136,13 +205,17 @@ class Match(Base):
     )
 
 
-class MatchParticipant(Base):
+class MatchParticipant(Base, TimestampMixin, VersionMixin, SoftDeleteMixin):
     """Links a Player to a Match, recording their specific involvement and result."""
 
     __tablename__ = "match_participants"
     id: Mapped[int] = mapped_column(primary_key=True)
-    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id"), nullable=False)
-    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), nullable=False)
+    match_id: Mapped[int] = mapped_column(
+        ForeignKey("matches.id"), nullable=False, index=True
+    )
+    player_id: Mapped[int] = mapped_column(
+        ForeignKey("players.id"), nullable=False, index=True
+    )
 
     # Pillar 1: Participation Structure
     # An integer to group players into teams for this match.
@@ -156,6 +229,7 @@ class MatchParticipant(Base):
     outcome: Mapped[dict] = mapped_column(JSON, nullable=False)
 
     # For auditing and historical analysis
+    # Uses RatingInfo structure: {'rating': float, 'rd': float, 'vol': float}
     rating_info_before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     rating_info_change: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 

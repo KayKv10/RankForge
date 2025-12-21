@@ -620,25 +620,26 @@ User → Select players + constraints → POST /matchmaking/generate
 
 ---
 
-#### Phase 0A: Critical Infrastructure Fixes (MUST DO FIRST)
+#### Phase 0A: Critical Infrastructure Fixes ✅ COMPLETED
 
-These issues will cause production failures and must be fixed before any other work.
+**Completed:** 2025-12-20
 
-| Task | Hours | Priority | Issue Addressed |
-|------|-------|----------|-----------------|
-| Externalize DATABASE_URL to environment variable | 1 | CRITICAL | Hardcoded SQLite path |
-| Add connection pool configuration | 2 | CRITICAL | No pool settings |
-| Fix transaction atomicity in match_service | 4 | CRITICAL | Ratings can be inconsistent |
-| Add try-except with rollback to get_db() | 1 | CRITICAL | No error handling |
-| Add FastAPI lifespan for connection cleanup | 2 | HIGH | Resource leaks |
+| Task | Hours | Status | File(s) Modified |
+|------|-------|--------|------------------|
+| Externalize DATABASE_URL to environment variable | 1 | ✅ Done | `src/rankforge/db/session.py`, `.env.example` |
+| Add connection pool configuration | 2 | ✅ Done | `src/rankforge/db/session.py` |
+| Fix transaction atomicity in match_service | 4 | ✅ Done | `src/rankforge/services/match_service.py`, rating engines |
+| Add try-except with rollback to get_db() | 1 | ✅ Done | `src/rankforge/db/session.py` |
+| Add FastAPI lifespan for connection cleanup | 2 | ✅ Done | `src/rankforge/main.py` |
 
 **Subtotal:** 10 hours
 
 **Completion Criteria:**
-- [ ] Application starts with DATABASE_URL environment variable
-- [ ] Connection pool configured with pool_size, max_overflow, pool_pre_ping
-- [ ] Match creation is fully atomic (match + ratings in single transaction)
-- [ ] Database errors result in proper rollback
+- [x] Application starts with DATABASE_URL environment variable
+- [x] Connection pool configured with pool_size, max_overflow, pool_pre_ping
+- [x] Match creation is fully atomic (match + ratings in single transaction)
+- [x] Database errors result in proper rollback
+- [x] Health check endpoint added (`GET /health`)
 
 ---
 
@@ -646,19 +647,26 @@ These issues will cause production failures and must be fixed before any other w
 
 The data layer has the most issues and requires significant restructuring.
 
-**Database Models Refactoring:**
+**Database Models Refactoring:** ✅ COMPLETED (2025-12-20)
 
-| Task | Hours | Priority | Issue Addressed |
-|------|-------|----------|-----------------|
-| Add database indexes to foreign key columns | 2 | HIGH | Full table scans |
-| Add `created_at`, `updated_at` to GameProfile, Match, MatchParticipant | 3 | HIGH | No audit trail |
-| Add `version` column for optimistic locking | 2 | HIGH | Concurrent update conflicts |
-| Standardize rating_info keys (rating, rd, sigma) | 3 | HIGH | Inconsistent key names |
-| Add `deleted_at` for soft delete support | 2 | MEDIUM | Data loss on delete |
-| Fix cascade behavior on Player.match_participations | 1 | MEDIUM | Orphaned records |
-| Create Alembic migration for all schema changes | 3 | HIGH | Apply changes safely |
+| Task | Hours | Status | File(s) Modified |
+|------|-------|--------|------------------|
+| Add database indexes to foreign key columns | 2 | ✅ Done | `src/rankforge/db/models.py` |
+| Add `created_at`, `updated_at` to GameProfile, Match, MatchParticipant | 3 | ✅ Done | `src/rankforge/db/models.py` (via mixins) |
+| Add `version` column for optimistic locking | 2 | ✅ Done | `src/rankforge/db/models.py` (VersionMixin) |
+| Standardize rating_info keys (rating, rd, vol) | 3 | ✅ Done | `src/rankforge/db/models.py` (RatingInfo TypedDict) |
+| Add `deleted_at` for soft delete support | 2 | ✅ Done | `src/rankforge/db/models.py` (SoftDeleteMixin) |
+| Fix cascade behavior on Player.match_participations | 1 | ✅ Done | `src/rankforge/db/models.py` (passive_deletes=True) |
+| Create Alembic migration for all schema changes | 3 | ✅ Done | `src/alembic/versions/20251220_add_timestamps_indexes_versioning.py` |
 
 **Subtotal:** 16 hours
+
+**Implementation Notes:**
+- Created `TimestampMixin`, `VersionMixin`, and `SoftDeleteMixin` for code reuse
+- Created `RatingInfo` TypedDict documenting standard keys: `rating`, `rd`, `vol`
+- All FK columns now have `index=True`
+- Migration handles SQLite constraints (constant defaults for ALTER TABLE)
+- All 24 tests passing, mypy clean, ruff clean
 
 **Pydantic Schema Refactoring:**
 
