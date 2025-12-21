@@ -241,7 +241,8 @@ async def process_new_match(
 
         # 5. Create the database models from the input schema.
         #    Exclude 'participants' as it's a list of schemas, not a direct field.
-        match_data = match_in.model_dump(exclude={"participants"})
+        #    Exclude 'played_at' if None to let the model use its default (now).
+        match_data = match_in.model_dump(exclude={"participants"}, exclude_none=True)
         new_match = models.Match(**match_data)
 
         # 5. Ensure profiles exist and create participant records.

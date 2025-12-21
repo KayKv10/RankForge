@@ -117,6 +117,13 @@ class MatchCreate(MatchBase):
     This is the main payload for submitting a new match.
     """
 
+    # Optional: when the match was played (defaults to now if not provided)
+    # Useful for importing historical match data
+    played_at: datetime | None = Field(
+        default=None,
+        description="When the match was played (ISO format). Defaults to current time.",
+    )
+
     participants: list[MatchParticipantCreate]
 
 

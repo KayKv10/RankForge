@@ -69,3 +69,33 @@ def test_calculate_player_scores_for_ranked_teams():
     # Assert scores for the 4th place team (players 1, 2)
     assert scores[1] == pytest.approx(0.0)
     assert scores[2] == pytest.approx(0.0)
+
+
+def test_calculate_player_scores_for_draw_only_match():
+    """
+    Verify that matches where ALL participants have 'draw' outcomes
+    are handled correctly (not falling through to ranked logic).
+
+    This was a bug where has_win_loss only checked for 'win' or 'loss',
+    causing draw-only matches to fail with RatingCalculationError.
+    """
+    # 1. ARRANGE: A 2v2 match where all participants have "draw" result
+    match = MockMatch(
+        participants=[
+            # Team 1 (both draw)
+            MockParticipant(player_id=1, team_id=1, outcome={"result": "draw"}),
+            MockParticipant(player_id=2, team_id=1, outcome={"result": "draw"}),
+            # Team 2 (both draw)
+            MockParticipant(player_id=3, team_id=2, outcome={"result": "draw"}),
+            MockParticipant(player_id=4, team_id=2, outcome={"result": "draw"}),
+        ]
+    )
+
+    # 2. ACT: Call the function under test.
+    scores = _calculate_player_scores(cast(Match, match))
+
+    # 3. ASSERT: All players should have a score of 0.5 (draw)
+    assert scores[1] == pytest.approx(0.5)
+    assert scores[2] == pytest.approx(0.5)
+    assert scores[3] == pytest.approx(0.5)
+    assert scores[4] == pytest.approx(0.5)

@@ -199,11 +199,11 @@ def _calculate_player_scores(match: models.Match) -> dict[int, float]:
     """
     player_scores: dict[int, float] = {}
 
-    # Check for simple win/loss first, as it's the most direct outcome
-    has_win_loss = any(
-        p.outcome.get("result") in ["win", "loss"] for p in match.participants
+    # Check for result-based outcomes first (win/loss/draw), as they're the most direct
+    has_result_outcome = any(
+        p.outcome.get("result") in ["win", "loss", "draw"] for p in match.participants
     )
-    if has_win_loss:
+    if has_result_outcome:
         for p in match.participants:
             result = p.outcome.get("result")
             if result == "win":
