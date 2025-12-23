@@ -241,3 +241,90 @@ class MatchParticipant(Base, TimestampMixin, VersionMixin, SoftDeleteMixin):
 
     player: Mapped["Player"] = relationship(back_populates="match_participations")
     match: Mapped["Match"] = relationship(back_populates="participants")
+
+
+# ===============================================
+# External System Sync Tracking (Game-Agnostic)
+# ===============================================
+
+
+class ExternalSyncBatch(Base, TimestampMixin):
+    """Tracks export batches to external rating/tracking systems.
+
+    This is a game-agnostic design that supports any external system:
+    - Pickleball: DUPR
+    - Tennis: UTR
+    - Chess: FIDE, Lichess, Chess.com
+    - Any future integrations
+
+    Each batch represents a single export (CSV, API call, etc.) that can
+    contain multiple matches.
+    """
+
+    __tablename__ = "external_sync_batches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    # Which external system this batch is for (e.g., "dupr", "utr", "fide")
+    system_name: Mapped[str] = mapped_column(String, nullable=False, index=True)
+
+    # Unique batch identifier within this system: {SYSTEM}-YYYYMMDD-HHMMSS
+    batch_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+
+    # Path to the generated export file (relative to project root), if applicable
+    export_file_path: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Summary statistics for this batch
+    match_count: Mapped[int] = mapped_column(nullable=False)
+    first_match_id: Mapped[int] = mapped_column(nullable=False)
+    last_match_id: Mapped[int] = mapped_column(nullable=False)
+
+    # Sync status tracking
+    # pending: Export generated, awaiting sync to external system
+    # synced: Successfully synced to external system
+    # failed: Sync attempt failed
+    status: Mapped[str] = mapped_column(String, default="pending", nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    sync_notes: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Relationship to individual sync records
+    records: Mapped[List["ExternalSyncRecord"]] = relationship(
+        back_populates="batch", cascade="all, delete-orphan"
+    )
+
+
+class ExternalSyncRecord(Base):
+    """Links individual matches to their external sync batch.
+
+    Tracks both included matches and excluded matches with reasons.
+    The unique constraint on (system_name, match_id) prevents duplicate
+    syncs of the same match to the same external system.
+    """
+
+    __tablename__ = "external_sync_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("external_sync_batches.id"), nullable=False, index=True
+    )
+    match_id: Mapped[int] = mapped_column(
+        ForeignKey("matches.id"), nullable=False, index=True
+    )
+
+    # Which external system (denormalized from batch for query efficiency)
+    system_name: Mapped[str] = mapped_column(String, nullable=False, index=True)
+
+    # Whether this match was included in the export or excluded
+    included: Mapped[bool] = mapped_column(default=True, nullable=False)
+
+    # If excluded, the reason why
+    # Examples:
+    #   "ineligible_game_type:Bo1 game", "no_external_id:GuestPlayer", "missing_score"
+    exclusion_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    batch: Mapped["ExternalSyncBatch"] = relationship(back_populates="records")
+
+    # Prevent the same match from being synced twice to the same system
+    __table_args__ = (
+        UniqueConstraint("system_name", "match_id", name="_external_sync_match_uc"),
+    )
