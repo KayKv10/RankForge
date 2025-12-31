@@ -2,8 +2,10 @@
 
 """API endpoints for managing matches."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,30 +17,87 @@ from rankforge.exceptions import (
     ValidationError,
 )
 from rankforge.schemas import match as match_schema
+from rankforge.schemas.pagination import MatchSortField, PaginatedResponse, SortOrder
 from rankforge.services import match_service
 
 # Create an APIRouter instance for matches
 router = APIRouter(prefix="/matches", tags=["Matches"])
 
 
-@router.get("/", response_model=list[match_schema.MatchRead])
-async def read_matches(db: AsyncSession = Depends(get_db)) -> list[Match]:
+@router.get("/", response_model=PaginatedResponse[match_schema.MatchRead])
+async def read_matches(
+    skip: int = Query(0, ge=0, description="Records to skip"),
+    limit: int = Query(50, ge=1, le=100, description="Max records to return"),
+    sort_by: MatchSortField = Query(MatchSortField.PLAYED_AT, description="Sort field"),
+    sort_order: SortOrder = Query(SortOrder.DESC, description="Sort direction"),
+    game_id: int | None = Query(None, description="Filter by game ID"),
+    player_id: int | None = Query(None, description="Filter by player"),
+    played_after: datetime | None = Query(None, description="After this date"),
+    played_before: datetime | None = Query(None, description="Before this date"),
+    db: AsyncSession = Depends(get_db),
+) -> PaginatedResponse[match_schema.MatchRead]:
     """
-    Retrieve a list of all matches, including participants and players.
+    Retrieve a paginated list of matches with filtering options.
+
+    - **skip**: Number of records to skip (for pagination)
+    - **limit**: Maximum number of records to return (1-100)
+    - **sort_by**: Field to sort by (id, played_at, created_at)
+    - **sort_order**: Sort direction (asc, desc)
+    - **game_id**: Filter by game ID
+    - **player_id**: Filter by player participation
+    - **played_after**: Filter matches played after this datetime
+    - **played_before**: Filter matches played before this datetime
     """
-    # Create a query via a select statement
+    # Build base query with soft delete filter
+    base_query = select(Match).where(Match.deleted_at.is_(None))
+
+    # Apply filters
+    if game_id is not None:
+        base_query = base_query.where(Match.game_id == game_id)
+
+    if player_id is not None:
+        # Join with participants to filter by player
+        base_query = base_query.join(MatchParticipant).where(
+            MatchParticipant.player_id == player_id
+        )
+
+    if played_after is not None:
+        base_query = base_query.where(Match.played_at >= played_after)
+
+    if played_before is not None:
+        base_query = base_query.where(Match.played_at <= played_before)
+
+    # Get total count (need distinct when joining)
+    if player_id is not None:
+        count_query = select(func.count(func.distinct(Match.id))).select_from(
+            base_query.subquery()
+        )
+    else:
+        count_query = select(func.count()).select_from(base_query.subquery())
+    total = (await db.execute(count_query)).scalar_one()
+
+    # Apply sorting
+    sort_column = getattr(Match, sort_by.value)
+    if sort_order == SortOrder.DESC:
+        sort_column = sort_column.desc()
+
+    # Apply pagination and eager load relationships
     query = (
-        select(Match)
-        .order_by(Match.id)
+        base_query.order_by(sort_column)
+        .offset(skip)
+        .limit(limit)
         .options(selectinload(Match.participants).selectinload(MatchParticipant.player))
     )
-
-    # Execute the query.
     result = await db.execute(query)
+    items = list(result.scalars().unique().all())
 
-    # Get all scalar results (the Match objects themselves) from the result.
-    matches = result.scalars().all()
-    return list(matches)
+    return PaginatedResponse(
+        items=items,  # type: ignore[arg-type]
+        total=total,
+        skip=skip,
+        limit=limit,
+        has_more=(skip + len(items)) < total,
+    )
 
 
 @router.post(

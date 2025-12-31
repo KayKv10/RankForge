@@ -172,9 +172,13 @@ async def test_list_matches(async_client: AsyncClient):
 
     # 4. ASSERT the request was successful and the data format is correct.
     assert response.status_code == 200
-    matches_list = response.json()
+    data = response.json()
 
-    assert isinstance(matches_list, list)
+    # Assert that we got a paginated response containing the matches.
+    assert "items" in data
+    assert "total" in data
+    assert "has_more" in data
+    matches_list = data["items"]
     assert len(matches_list) >= 2
 
     # Find our created matches in the response list

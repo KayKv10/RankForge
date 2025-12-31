@@ -80,12 +80,14 @@ async def test_list_games(async_client: AsyncClient):
     assert response.status_code == 200
     data = response.json()
 
-    # Assert that we got a list containing the two games.
-    assert isinstance(data, list)
-    assert len(data) >= 2
+    # Assert that we got a paginated response containing the two games.
+    assert "items" in data
+    assert "total" in data
+    assert "has_more" in data
+    assert len(data["items"]) >= 2
 
     # Check that the names of created games are in the response list.
-    response_names = {game["name"] for game in data}
+    response_names = {game["name"] for game in data["items"]}
     assert game1_payload["name"] in response_names
     assert game2_payload["name"] in response_names
 

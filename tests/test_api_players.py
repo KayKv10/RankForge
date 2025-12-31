@@ -60,11 +60,14 @@ async def test_list_players(async_client: AsyncClient):
     assert response.status_code == 200
     data = response.json()
 
-    assert isinstance(data, list)
-    assert len(data) >= 2
+    # Assert that we got a paginated response containing the players.
+    assert "items" in data
+    assert "total" in data
+    assert "has_more" in data
+    assert len(data["items"]) >= 2
 
     # Verify that the names of the created players are in the response list.
-    response_names = {player["name"] for player in data}
+    response_names = {player["name"] for player in data["items"]}
     assert "Alice" in response_names
     assert "Bob" in response_names
 

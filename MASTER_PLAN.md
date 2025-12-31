@@ -723,22 +723,36 @@ The data layer has the most issues and requires significant restructuring.
 
 ---
 
-#### Phase 0C: API Layer Improvements
+#### Phase 0C: API Layer Improvements ✅ COMPLETED
 
-| Task | Hours | Priority | Issue Addressed |
-|------|-------|----------|-----------------|
-| Add pagination to all list endpoints | 4 | CRITICAL | Returns all records |
-| Add filtering (by game_id, player_id, date range) | 3 | HIGH | No filtering |
-| Add sorting options | 2 | MEDIUM | Hardcoded order |
-| Catch IntegrityError, return proper HTTPException | 2 | HIGH | Raw DB errors |
-| Add GET /games/{game_id}/leaderboard endpoint | 4 | HIGH | Missing core feature |
-| Add GET /players/{player_id}/stats endpoint | 4 | HIGH | Missing core feature |
-| Add GET /players/{player_id}/matches endpoint | 3 | MEDIUM | Missing feature |
-| Add GET /health endpoint | 1 | MEDIUM | No health check |
-| Add global exception handler | 2 | MEDIUM | Inconsistent errors |
-| Add request/response logging middleware | 2 | MEDIUM | No audit trail |
+**Completed:** 2025-12-31
+
+| Task | Hours | Priority | Status | Issue Addressed |
+|------|-------|----------|--------|-----------------|
+| Add pagination to all list endpoints | 4 | CRITICAL | ✅ Done | Returns all records |
+| Add filtering (by game_id, player_id, date range) | 3 | HIGH | ✅ Done | No filtering |
+| Add sorting options | 2 | MEDIUM | ✅ Done | Hardcoded order |
+| Catch IntegrityError, return proper HTTPException | 2 | HIGH | ✅ Done | Raw DB errors |
+| Add GET /games/{game_id}/leaderboard endpoint | 4 | HIGH | ✅ Done | Missing core feature |
+| Add GET /players/{player_id}/stats endpoint | 4 | HIGH | ✅ Done | Missing core feature |
+| Add GET /players/{player_id}/matches endpoint | 3 | MEDIUM | ✅ Done | Missing feature |
+| Add GET /health endpoint | 1 | MEDIUM | ✅ Done | No health check |
+| Add global exception handler | 2 | MEDIUM | ✅ Done | Inconsistent errors |
+| Add request/response logging middleware | 2 | MEDIUM | ✅ Done | No audit trail |
 
 **Subtotal:** 27 hours
+
+**Implementation Notes:**
+- Created `src/rankforge/schemas/pagination.py` with `PaginatedResponse` generic, sort field enums, and `SortOrder` enum
+- Created `src/rankforge/schemas/leaderboard.py` with `LeaderboardEntry` schema
+- Created `src/rankforge/schemas/player_stats.py` with `GameStats` and `PlayerStats` schemas
+- Created `src/rankforge/middleware/logging.py` with `RequestLoggingMiddleware` that adds X-Request-ID header
+- Added global exception handlers in `main.py` for `ResourceNotFoundError` (404), `ValidationError` (422), `RatingEngineError` (500), `IntegrityError` (409/400), `SQLAlchemyError` (500), and generic `Exception` (500)
+- Updated all list endpoints with pagination (skip/limit), sorting (sort_by/sort_order), and soft delete filtering
+- Added filtering to matches endpoint: game_id, player_id, played_after, played_before
+- Added `include_anonymous` filter to players list endpoint
+- New endpoints: `GET /games/{game_id}/leaderboard`, `GET /players/{player_id}/stats`, `GET /players/{player_id}/matches`
+- All 25 tests passing, mypy clean, ruff clean
 
 ---
 
