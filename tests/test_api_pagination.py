@@ -728,3 +728,154 @@ async def test_leaderboard_pagination(async_client: AsyncClient):
     assert len(data["items"]) <= 3
     assert "total" in data
     assert "has_more" in data
+
+
+# =============================================================================
+# Leaderboard Tiebreaker Logic
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_tiebreaker_same_rating(async_client: AsyncClient):
+    """Test leaderboard ordering when players have identical or similar ratings."""
+    # 1. ARRANGE: Create game
+    game_id = await create_game(async_client, "TiebreakerGame")
+
+    # Create 4 players
+    player_ids = []
+    for i in range(4):
+        pid = await create_player(async_client, f"TiePlayer{i}")
+        player_ids.append(pid)
+
+    # Create matches so all players end up with approximately same rating.
+    # P0 vs P1 (P0 wins), P2 vs P3 (P2 wins)
+    await create_match(async_client, game_id, player_ids[0], player_ids[1])
+    await create_match(async_client, game_id, player_ids[2], player_ids[3])
+
+    # P2 beats P0, P1 beats P3 (each player now has 1 win and 1 loss)
+    response = await async_client.post(
+        "/matches/",
+        json={
+            "game_id": game_id,
+            "participants": [
+                {
+                    "player_id": player_ids[2],
+                    "team_id": 1,
+                    "outcome": {"result": "win"},
+                },
+                {
+                    "player_id": player_ids[0],
+                    "team_id": 2,
+                    "outcome": {"result": "loss"},
+                },
+            ],
+        },
+    )
+    assert response.status_code == 201
+
+    response = await async_client.post(
+        "/matches/",
+        json={
+            "game_id": game_id,
+            "participants": [
+                {
+                    "player_id": player_ids[1],
+                    "team_id": 1,
+                    "outcome": {"result": "win"},
+                },
+                {
+                    "player_id": player_ids[3],
+                    "team_id": 2,
+                    "outcome": {"result": "loss"},
+                },
+            ],
+        },
+    )
+    assert response.status_code == 201
+
+    # 2. ACT: Get leaderboard
+    leaderboard_response = await async_client.get(f"/games/{game_id}/leaderboard")
+    assert leaderboard_response.status_code == 200
+    data = leaderboard_response.json()
+
+    # 3. ASSERT: Verify all players appear and ranks are sequential
+    assert len(data["items"]) == 4
+
+    # Verify ranks are 1, 2, 3, 4 (sequential)
+    ranks = [entry["rank"] for entry in data["items"]]
+    assert ranks == [1, 2, 3, 4], "Ranks should be sequential 1-4"
+
+    # Verify ordering is stable (same request returns same order)
+    leaderboard_response2 = await async_client.get(f"/games/{game_id}/leaderboard")
+    data2 = leaderboard_response2.json()
+    player_order1 = [e["player"]["id"] for e in data["items"]]
+    player_order2 = [e["player"]["id"] for e in data2["items"]]
+    assert player_order1 == player_order2, "Leaderboard ordering should be stable"
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_only_includes_players_who_played(async_client: AsyncClient):
+    """Test that leaderboard only includes players who have played in that game."""
+    # 1. ARRANGE: Create game
+    game_id = await create_game(async_client, "PlayedOnlyGame")
+
+    # Create 3 players but only have P0 and P1 play - P2 never plays
+    player_ids = []
+    for i in range(3):
+        pid = await create_player(async_client, f"PlayedOnlyPlayer{i}")
+        player_ids.append(pid)
+
+    # Only P0 and P1 play
+    await create_match(async_client, game_id, player_ids[0], player_ids[1])
+
+    # 2. ACT: Get leaderboard
+    leaderboard_response = await async_client.get(f"/games/{game_id}/leaderboard")
+    assert leaderboard_response.status_code == 200
+    data = leaderboard_response.json()
+
+    # 3. ASSERT: Only players who played appear on leaderboard
+    assert len(data["items"]) == 2
+    leaderboard_player_ids = {e["player"]["id"] for e in data["items"]}
+    assert player_ids[0] in leaderboard_player_ids
+    assert player_ids[1] in leaderboard_player_ids
+    assert player_ids[2] not in leaderboard_player_ids  # Never played
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_rating_order_correct(async_client: AsyncClient):
+    """Test that leaderboard correctly orders by rating descending."""
+    # 1. ARRANGE
+    game_id = await create_game(async_client, "RatingOrderGame")
+
+    # Create 3 players
+    p_top = await create_player(async_client, "TopRatedPlayer")
+    p_mid = await create_player(async_client, "MidRatedPlayer")
+    p_bot = await create_player(async_client, "BotRatedPlayer")
+
+    # Create matches to establish clear rating hierarchy
+    # p_top beats p_mid
+    await create_match(async_client, game_id, p_top, p_mid)
+    # p_mid beats p_bot
+    await create_match(async_client, game_id, p_mid, p_bot)
+    # p_top beats p_bot (reinforces top position)
+    await create_match(async_client, game_id, p_top, p_bot)
+
+    # 2. ACT
+    leaderboard_response = await async_client.get(f"/games/{game_id}/leaderboard")
+    assert leaderboard_response.status_code == 200
+    data = leaderboard_response.json()
+
+    # 3. ASSERT: Verify correct ordering
+    assert len(data["items"]) == 3
+
+    # Extract ratings
+    ratings = [entry["rating_info"]["rating"] for entry in data["items"]]
+
+    # Verify descending order
+    assert ratings == sorted(
+        ratings, reverse=True
+    ), "Leaderboard should be sorted by rating descending"
+
+    # Verify correct players at positions
+    assert data["items"][0]["player"]["id"] == p_top  # Rank 1
+    assert data["items"][2]["player"]["id"] == p_bot  # Rank 3

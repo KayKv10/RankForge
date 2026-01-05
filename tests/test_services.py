@@ -530,3 +530,82 @@ async def test_process_new_match_handles_ranked_teams(db_session: AsyncSession):
     assert (
         p_rank2_change > p_rank3_change
     ), "2nd place change should be > 3rd place change"
+
+
+@pytest.mark.asyncio
+async def test_process_new_match_handles_4v4_team_draw(db_session: AsyncSession):
+    """
+    Verify the Glicko-2 engine correctly processes a 4v4 team-based draw.
+    - All players should have ratings close to initial (small change due to RD).
+    - Teammates should have identical rating changes.
+    """
+    # 1. ARRANGE: Set up a game and 8 players (4 per team)
+    game = Game(name="4v4 Draw Game", rating_strategy="glicko2")
+    db_session.add(game)
+    await db_session.commit()
+
+    team1_players = [Player(name=f"Team1Player{i}") for i in range(4)]
+    team2_players = [Player(name=f"Team2Player{i}") for i in range(4)]
+    all_players = team1_players + team2_players
+
+    db_session.add_all(all_players)
+    await db_session.commit()
+
+    # Create identical profiles for all players
+    initial_rating = 1500.0
+    initial_rating_info = {"rating": initial_rating, "rd": 200.0, "vol": 0.06}
+    profiles = {}
+
+    for player in all_players:
+        profile = GameProfile(
+            player_id=player.id,
+            game_id=game.id,
+            rating_info=initial_rating_info.copy(),
+        )
+        db_session.add(profile)
+        profiles[player.id] = profile
+    await db_session.commit()
+
+    # 2. ACT: Process a 4v4 draw
+    match_in = MatchCreate(
+        game_id=game.id,
+        participants=[
+            # Team 1 (all draw)
+            *[
+                MatchParticipantCreate(
+                    player_id=p.id, team_id=1, outcome={"result": "draw"}
+                )
+                for p in team1_players
+            ],
+            # Team 2 (all draw)
+            *[
+                MatchParticipantCreate(
+                    player_id=p.id, team_id=2, outcome={"result": "draw"}
+                )
+                for p in team2_players
+            ],
+        ],
+    )
+    await match_service.process_new_match(db=db_session, match_in=match_in)
+
+    # 3. ASSERT: Verify ratings are close to initial and teammates have same changes
+    for profile in profiles.values():
+        await db_session.refresh(profile)
+
+    # Get new ratings
+    team1_ratings = [profiles[p.id].rating_info["rating"] for p in team1_players]
+    team2_ratings = [profiles[p.id].rating_info["rating"] for p in team2_players]
+
+    # All teammates should have identical ratings (same change)
+    assert all(
+        r == team1_ratings[0] for r in team1_ratings
+    ), "Team1 players should have identical ratings"
+    assert all(
+        r == team2_ratings[0] for r in team2_ratings
+    ), "Team2 players should have identical ratings"
+
+    # Ratings should be close to initial (draw between equals)
+    for rating in team1_ratings + team2_ratings:
+        assert (
+            abs(rating - initial_rating) < 50
+        ), f"Rating {rating} should be close to {initial_rating} after draw"

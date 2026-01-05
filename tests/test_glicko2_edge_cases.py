@@ -2,6 +2,7 @@
 
 """Tests for Glicko-2 rating engine edge cases."""
 
+import math
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -315,6 +316,140 @@ def test_glicko2_engine_multiple_opponents():
 
     # Should be close to original since beat weaker, lost to stronger
     assert abs(new_rating.mu - 1500.0) < 100
+
+
+# =============================================================================
+# Unit Tests: Extreme Rating Value Edge Cases
+# =============================================================================
+
+
+def test_glicko2_engine_very_low_rating():
+    """Test rating calculation with near-zero rating (rating = 100)."""
+    engine = Glicko2Engine()
+    low_rated = Glicko2Rating(mu=100.0, phi=200.0, sigma=0.06)
+    opponent = Glicko2Rating(mu=1500.0, phi=200.0, sigma=0.06)
+
+    # Low rated player wins (major upset)
+    new_rating = engine.rate(low_rated, [(opponent, 1.0)])
+
+    # Should have substantial rating increase, no math errors
+    assert new_rating.mu > 100.0
+    assert new_rating.mu > low_rated.mu + 100  # Substantial gain
+    assert not math.isnan(new_rating.mu)
+    assert not math.isinf(new_rating.mu)
+
+
+def test_glicko2_engine_very_high_rating():
+    """Test rating calculation with very high rating (rating = 3500)."""
+    engine = Glicko2Engine()
+    high_rated = Glicko2Rating(mu=3500.0, phi=200.0, sigma=0.06)
+    opponent = Glicko2Rating(mu=1500.0, phi=200.0, sigma=0.06)
+
+    # High rated player loses (upset)
+    new_rating = engine.rate(high_rated, [(opponent, 0.0)])
+
+    # Should decrease but remain valid
+    assert new_rating.mu < 3500.0
+    assert new_rating.mu > 0  # Should not go negative
+    assert not math.isnan(new_rating.mu)
+    assert not math.isinf(new_rating.mu)
+
+
+def test_glicko2_engine_rating_at_zero():
+    """Test rating calculation when rating equals zero."""
+    engine = Glicko2Engine()
+    zero_rated = Glicko2Rating(mu=0.0, phi=350.0, sigma=0.06)
+    opponent = Glicko2Rating(mu=1500.0, phi=200.0, sigma=0.06)
+
+    # Zero-rated player wins
+    new_rating = engine.rate(zero_rated, [(opponent, 1.0)])
+
+    # Calculation should complete without error
+    assert new_rating.mu > 0.0  # Should increase after win
+    assert not math.isnan(new_rating.mu)
+    assert not math.isinf(new_rating.mu)
+
+
+def test_glicko2_engine_minimum_rd():
+    """Test rating with near-minimum RD (phi = 10.0 - very certain)."""
+    engine = Glicko2Engine()
+    certain_player = Glicko2Rating(mu=1500.0, phi=10.0, sigma=0.06)
+    opponent = Glicko2Rating(mu=1500.0, phi=200.0, sigma=0.06)
+
+    new_rating = engine.rate(certain_player, [(opponent, 1.0)])
+
+    # Rating change should be small due to low RD (high certainty)
+    rating_change = abs(new_rating.mu - certain_player.mu)
+    assert rating_change < 50  # Small change due to certainty
+    assert new_rating.phi > 0  # RD stays positive
+    assert not math.isnan(new_rating.phi)
+    assert not math.isinf(new_rating.phi)
+
+
+def test_glicko2_engine_maximum_rd():
+    """Test rating with maximum RD (phi = 400.0 - very uncertain)."""
+    engine = Glicko2Engine()
+    uncertain_player = Glicko2Rating(mu=1500.0, phi=400.0, sigma=0.06)
+    opponent = Glicko2Rating(mu=1500.0, phi=200.0, sigma=0.06)
+
+    new_rating = engine.rate(uncertain_player, [(opponent, 1.0)])
+
+    # Should handle gracefully
+    assert new_rating.mu > 1500.0  # Win increases rating
+    assert new_rating.phi < 400.0  # RD should decrease after playing
+    assert not math.isnan(new_rating.mu)
+    assert not math.isnan(new_rating.phi)
+
+
+def test_glicko2_engine_near_zero_volatility():
+    """Test rating with near-zero volatility (sigma = 0.001)."""
+    engine = Glicko2Engine()
+    stable_player = Glicko2Rating(mu=1500.0, phi=200.0, sigma=0.001)
+    opponent = Glicko2Rating(mu=1500.0, phi=200.0, sigma=0.06)
+
+    new_rating = engine.rate(stable_player, [(opponent, 1.0)])
+
+    # Calculation should complete without error
+    assert not math.isnan(new_rating.sigma)
+    assert not math.isinf(new_rating.sigma)
+    assert new_rating.sigma > 0
+    assert new_rating.mu > 1500.0  # Win increases rating
+
+
+def test_glicko2_engine_high_volatility_extreme():
+    """Test rating with high volatility (sigma = 0.15)."""
+    engine = Glicko2Engine()
+    volatile_player = Glicko2Rating(mu=1500.0, phi=200.0, sigma=0.15)
+    opponent = Glicko2Rating(mu=1500.0, phi=200.0, sigma=0.06)
+
+    new_rating = engine.rate(volatile_player, [(opponent, 1.0)])
+
+    # Calculation should complete without error
+    assert not math.isnan(new_rating.sigma)
+    assert not math.isinf(new_rating.sigma)
+    assert new_rating.sigma > 0
+    assert new_rating.sigma < 1.0  # Should stay bounded
+
+
+def test_glicko2_engine_extreme_rating_difference():
+    """Test match between players with massive rating difference (3000+ gap)."""
+    engine = Glicko2Engine()
+    grandmaster = Glicko2Rating(mu=3000.0, phi=50.0, sigma=0.06)
+    beginner = Glicko2Rating(mu=100.0, phi=350.0, sigma=0.06)
+
+    # Beginner beats grandmaster (massive upset)
+    beginner_result = engine.rate(beginner, [(grandmaster, 1.0)])
+    grandmaster_result = engine.rate(grandmaster, [(beginner, 0.0)])
+
+    # Both calculations complete without NaN/Inf
+    assert not math.isnan(beginner_result.mu)
+    assert not math.isnan(grandmaster_result.mu)
+    assert not math.isinf(beginner_result.mu)
+    assert not math.isinf(grandmaster_result.mu)
+
+    # Beginner gains rating, grandmaster loses
+    assert beginner_result.mu > beginner.mu
+    assert grandmaster_result.mu < grandmaster.mu
 
 
 # =============================================================================

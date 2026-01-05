@@ -232,3 +232,178 @@ async def test_delete_match(async_client: AsyncClient):
     # 4. VERIFY that the match is gone.
     get_response = await async_client.get(f"/matches/{match_id}")
     assert get_response.status_code == 404
+
+
+# =============================================================================
+# Match Metadata Edge Cases
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_match_metadata_empty_dict(async_client: AsyncClient):
+    """Test that matches work correctly with explicit empty metadata dict."""
+    # Setup
+    game_res = await async_client.post(
+        "/games/", json={"name": "EmptyMetaGame", "rating_strategy": "glicko2"}
+    )
+    game_id = game_res.json()["id"]
+    p1_res = await async_client.post("/players/", json={"name": "EmptyMetaP1"})
+    p2_res = await async_client.post("/players/", json={"name": "EmptyMetaP2"})
+
+    # Create match with explicit empty metadata
+    response = await async_client.post(
+        "/matches/",
+        json={
+            "game_id": game_id,
+            "match_metadata": {},
+            "participants": [
+                {
+                    "player_id": p1_res.json()["id"],
+                    "team_id": 1,
+                    "outcome": {"result": "win"},
+                },
+                {
+                    "player_id": p2_res.json()["id"],
+                    "team_id": 2,
+                    "outcome": {"result": "loss"},
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["match_metadata"] == {}
+
+
+@pytest.mark.asyncio
+async def test_match_metadata_omitted(async_client: AsyncClient):
+    """Test that matches work when metadata is not provided (uses default)."""
+    # Setup
+    game_res = await async_client.post(
+        "/games/", json={"name": "NoMetaGame", "rating_strategy": "glicko2"}
+    )
+    game_id = game_res.json()["id"]
+    p1_res = await async_client.post("/players/", json={"name": "NoMetaP1"})
+    p2_res = await async_client.post("/players/", json={"name": "NoMetaP2"})
+
+    # Create match WITHOUT metadata field
+    response = await async_client.post(
+        "/matches/",
+        json={
+            "game_id": game_id,
+            # match_metadata intentionally omitted
+            "participants": [
+                {
+                    "player_id": p1_res.json()["id"],
+                    "team_id": 1,
+                    "outcome": {"result": "win"},
+                },
+                {
+                    "player_id": p2_res.json()["id"],
+                    "team_id": 2,
+                    "outcome": {"result": "loss"},
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["match_metadata"] == {}  # Default empty dict
+
+
+@pytest.mark.asyncio
+async def test_match_metadata_complex_structure(async_client: AsyncClient):
+    """Test that metadata supports nested structures and various data types."""
+    # Setup
+    game_res = await async_client.post(
+        "/games/", json={"name": "ComplexMetaGame", "rating_strategy": "glicko2"}
+    )
+    game_id = game_res.json()["id"]
+    p1_res = await async_client.post("/players/", json={"name": "ComplexMetaP1"})
+    p2_res = await async_client.post("/players/", json={"name": "ComplexMetaP2"})
+
+    complex_metadata = {
+        "map": "Castle Arena",
+        "game_length_seconds": 342,
+        "is_tournament": True,
+        "scores": [21, 18],
+        "settings": {
+            "difficulty": "hard",
+            "modifiers": ["no_items", "fast_spawn"],
+        },
+        "null_field": None,
+    }
+
+    response = await async_client.post(
+        "/matches/",
+        json={
+            "game_id": game_id,
+            "match_metadata": complex_metadata,
+            "participants": [
+                {
+                    "player_id": p1_res.json()["id"],
+                    "team_id": 1,
+                    "outcome": {"result": "win"},
+                },
+                {
+                    "player_id": p2_res.json()["id"],
+                    "team_id": 2,
+                    "outcome": {"result": "loss"},
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["match_metadata"]["map"] == "Castle Arena"
+    assert data["match_metadata"]["game_length_seconds"] == 342
+    assert data["match_metadata"]["is_tournament"] is True
+    assert data["match_metadata"]["scores"] == [21, 18]
+    assert data["match_metadata"]["settings"]["difficulty"] == "hard"
+    assert data["match_metadata"]["null_field"] is None
+
+
+@pytest.mark.asyncio
+async def test_match_metadata_special_characters(async_client: AsyncClient):
+    """Test that metadata handles special characters and unicode."""
+    # Setup
+    game_res = await async_client.post(
+        "/games/", json={"name": "UnicodeMetaGame", "rating_strategy": "glicko2"}
+    )
+    game_id = game_res.json()["id"]
+    p1_res = await async_client.post("/players/", json={"name": "UnicodeMetaP1"})
+    p2_res = await async_client.post("/players/", json={"name": "UnicodeMetaP2"})
+
+    unicode_metadata = {
+        "venue": "Tokyo Arena - \u6771\u4eac",
+        "player_comment": "Great game!",
+        "special_chars": 'quotes: "test", backslash: \\',
+    }
+
+    response = await async_client.post(
+        "/matches/",
+        json={
+            "game_id": game_id,
+            "match_metadata": unicode_metadata,
+            "participants": [
+                {
+                    "player_id": p1_res.json()["id"],
+                    "team_id": 1,
+                    "outcome": {"result": "win"},
+                },
+                {
+                    "player_id": p2_res.json()["id"],
+                    "team_id": 2,
+                    "outcome": {"result": "loss"},
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert "\u6771\u4eac" in data["match_metadata"]["venue"]  # Japanese chars
+    assert data["match_metadata"]["special_chars"] == 'quotes: "test", backslash: \\'

@@ -99,3 +99,86 @@ def test_calculate_player_scores_for_draw_only_match():
     assert scores[2] == pytest.approx(0.5)
     assert scores[3] == pytest.approx(0.5)
     assert scores[4] == pytest.approx(0.5)
+
+
+def test_calculate_player_scores_for_3v3_draw():
+    """
+    Verify that 3v3 team matches where all participants have 'draw' outcomes
+    correctly assign 0.5 score to all players.
+    """
+    # 1. ARRANGE: A 3v3 match where all participants have "draw" result
+    match = MockMatch(
+        participants=[
+            # Team 1 (3 players, all draw)
+            MockParticipant(player_id=1, team_id=1, outcome={"result": "draw"}),
+            MockParticipant(player_id=2, team_id=1, outcome={"result": "draw"}),
+            MockParticipant(player_id=3, team_id=1, outcome={"result": "draw"}),
+            # Team 2 (3 players, all draw)
+            MockParticipant(player_id=4, team_id=2, outcome={"result": "draw"}),
+            MockParticipant(player_id=5, team_id=2, outcome={"result": "draw"}),
+            MockParticipant(player_id=6, team_id=2, outcome={"result": "draw"}),
+        ]
+    )
+
+    # 2. ACT: Call the function under test.
+    scores = _calculate_player_scores(cast(Match, match))
+
+    # 3. ASSERT: All 6 players should have a score of 0.5 (draw)
+    for player_id in range(1, 7):
+        assert scores[player_id] == pytest.approx(
+            0.5
+        ), f"Player {player_id} should have score 0.5"
+
+
+def test_calculate_player_scores_for_4v4_draw():
+    """
+    Verify that 4v4 team matches where all participants have 'draw' outcomes
+    correctly assign 0.5 score to all players.
+    """
+    # 1. ARRANGE: A 4v4 match where all participants have "draw" result
+    match = MockMatch(
+        participants=[
+            # Team 1 (4 players, all draw)
+            MockParticipant(player_id=1, team_id=1, outcome={"result": "draw"}),
+            MockParticipant(player_id=2, team_id=1, outcome={"result": "draw"}),
+            MockParticipant(player_id=3, team_id=1, outcome={"result": "draw"}),
+            MockParticipant(player_id=4, team_id=1, outcome={"result": "draw"}),
+            # Team 2 (4 players, all draw)
+            MockParticipant(player_id=5, team_id=2, outcome={"result": "draw"}),
+            MockParticipant(player_id=6, team_id=2, outcome={"result": "draw"}),
+            MockParticipant(player_id=7, team_id=2, outcome={"result": "draw"}),
+            MockParticipant(player_id=8, team_id=2, outcome={"result": "draw"}),
+        ]
+    )
+
+    # 2. ACT: Call the function under test.
+    scores = _calculate_player_scores(cast(Match, match))
+
+    # 3. ASSERT: All 8 players should have a score of 0.5 (draw)
+    for player_id in range(1, 9):
+        assert scores[player_id] == pytest.approx(
+            0.5
+        ), f"Player {player_id} should have score 0.5"
+
+
+def test_calculate_player_scores_for_3_team_draw():
+    """
+    Verify that a 3-team match where all teams draw correctly assigns 0.5 to all.
+    This tests the edge case of >2 teams all drawing (e.g., 1v1v1).
+    """
+    # 1. ARRANGE: A match with 3 teams (1 player each) all drawing
+    match = MockMatch(
+        participants=[
+            MockParticipant(player_id=1, team_id=1, outcome={"result": "draw"}),
+            MockParticipant(player_id=2, team_id=2, outcome={"result": "draw"}),
+            MockParticipant(player_id=3, team_id=3, outcome={"result": "draw"}),
+        ]
+    )
+
+    # 2. ACT: Call the function under test.
+    scores = _calculate_player_scores(cast(Match, match))
+
+    # 3. ASSERT: All players should have 0.5
+    assert scores[1] == pytest.approx(0.5)
+    assert scores[2] == pytest.approx(0.5)
+    assert scores[3] == pytest.approx(0.5)
